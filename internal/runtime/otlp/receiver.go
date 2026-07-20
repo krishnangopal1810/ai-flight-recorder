@@ -142,7 +142,7 @@ func (r *Receiver) Capture(ctx context.Context, request *collectortrace.ExportTr
 						captured.OutputType = "application/json"
 					}
 				}
-				if key := firstString(spanAttributes, "flight.boundary.logical_key", "flight.logical_key"); key != "" {
+				if key := firstString(spanAttributes, "flight.boundary.logical_key"); key != "" {
 					ignorePaths := []string{}
 					_ = json.Unmarshal([]byte(firstString(spanAttributes, "flight.boundary.ignore_paths")), &ignorePaths)
 					captured.Boundary = &types.Boundary{LogicalKey: key, ParentLogicalKey: firstString(spanAttributes, "flight.boundary.parent_logical_key"), Class: firstString(spanAttributes, "flight.boundary.class"), RequestDigest: firstString(spanAttributes, "flight.boundary.request_digest"), SideEffect: defaultString(firstString(spanAttributes, "flight.boundary.side_effect"), "unknown"), ReplayPolicy: defaultString(firstString(spanAttributes, "flight.boundary.replay_policy"), "substitute"), MatchingRule: types.MatchingRule{Mode: defaultString(firstString(spanAttributes, "flight.boundary.matching_mode"), "exact"), IgnorePaths: ignorePaths}, Sandbox: firstString(spanAttributes, "flight.boundary.sandbox")}

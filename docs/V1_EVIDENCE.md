@@ -9,15 +9,15 @@ This is the requirement-by-requirement completion ledger for the active V1 plan.
 | AFR-CAP-003 | `make integration`, policy/capture tests | Partial | Full content classes, typed serialization/limit omissions, offline replay |
 | AFR-CAP-004 | `make e2e`, bundle round trip | Partial | Compatible unknown-field preservation and atomic unsupported-major import |
 | AFR-ING-001 | `make integration`, OTLP HTTP/gRPC agent fixture | Partial | All GenAI/OpenInference kinds, convention metadata, malformed mixed batches on both transports |
-| AFR-ING-002 | `make test`, Python and TypeScript SDK suites | Partial | Executable equivalent reference agents exporting standard OTLP and incomplete diagnostics |
+| AFR-ING-002 | `make test`; Python reference agent in `make harness-check` exports standard OTLP and replays through the native SDK | Partial | Equivalent executable TypeScript reference agent and end-to-end incomplete-metadata diagnostic |
 | AFR-ING-003 | `make test`, completeness unit tests | Partial | Boundary-by-boundary playback/replay/diff/bisect reports through API, CLI, and UI |
 | AFR-SEC-001 | `make security`, local seeded-secret store scan | Partial | Hosted DB/object store, bundles, indexes, logs, metrics, traces, diagnostics, and quarantine scan |
 | AFR-SEC-002 | architecture telemetry lint | Partial | Captured operational telemetry egress scan and exporter fail-closed behavior |
 | AFR-SEC-003 | configuration and auth tests | Partial | Non-loopback refusal, native TLS, proxy TLS, unauthenticated hosted deployment journey |
 | AFR-SEC-004 | repository retention tests | Partial | Project scheduling, all limit actions/classes, deletion audit, unsafe-accounting preservation |
 | AFR-PLY-001 | playback service and inspector tests | Partial | Network-disabled proof of zero application processes and outbound requests with corrupt evidence |
-| AFR-RPL-001 | replay coordinator unit tests | Partial | Real isolated reference entrypoint producing a linked candidate capsule and immutable plan |
-| AFR-RPL-002 | substitution-envelope unit test | Partial | Offline non-model replay, declared live model route, all-substituted replay, unmatched no-fallback proof |
+| AFR-RPL-001 | `make harness-check` records and replays the Python reference entrypoint through OCI, verifies the immutable plan digest, source linkage, exact candidate, and preflight contracts | Proven | — |
+| AFR-RPL-002 | `make harness-check` proves offline non-model substitution and an unmatched request that exits without invoking its live callback | Partial | Declared live model-provider route and a second all-substituted LLM replay |
 | AFR-RPL-003 | `make security`, uncached live OCI probe plus remote-daemon-safe volume/copy contract | Partial | Instrumented/uninstrumented DB, email, payment blocks and approved live sandbox |
 | AFR-RPL-004 | outcome-classifier unit test | Partial | Three-or-more real trials with tolerances/evaluator through CLI and inspector |
 | AFR-DIF-001 | synthetic diff unit tests | Partial | Insert/delete/move/ambiguity fixtures and layered fallback alignment |

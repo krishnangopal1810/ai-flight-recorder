@@ -21,6 +21,10 @@ case "$kind" in
     job_id="${2:?observe: job ID required; create a replay first}"
     curl --fail --silent --show-error -H "Authorization: Bearer ${token}" "$base/api/v1/jobs/${job_id}"
     ;;
-  --help|-h|help) echo 'usage: scripts/observe.sh <logs [lines]|metrics|capsules [limit]|traces <capsule-id>|jobs <job-id>>' ;;
-  *) echo 'observe: expected logs, metrics, capsules, traces, or jobs; run scripts/observe.sh --help' >&2; exit 2 ;;
+  job-events)
+    job_id="${2:?observe: job ID required; create a replay first}"
+    curl --fail --silent --show-error --no-buffer -H "Authorization: Bearer ${token}" "$base/api/v1/jobs/${job_id}/events"
+    ;;
+  --help|-h|help) echo 'usage: scripts/observe.sh <logs [lines]|metrics|capsules [limit]|traces <capsule-id>|jobs <job-id>|job-events <job-id>>' ;;
+  *) echo 'observe: expected logs, metrics, capsules, traces, jobs, or job-events; run scripts/observe.sh --help' >&2; exit 2 ;;
 esac

@@ -226,7 +226,6 @@ func newReplay(options *rootOptions) *cobra.Command {
 	command.Flags().BoolVar(&request.AllowSandboxedSideEffects, "allow-sandboxed-side-effects", false, "allow declared mutating boundaries only inside their sandbox")
 	command.Flags().IntVar(&request.Repetitions, "repetitions", 1, "number of replay trials")
 	command.Flags().Float64Var(&request.PassThreshold, "pass-threshold", 1, "required evaluator pass ratio")
-	command.Flags().StringVar(&request.GatewayImage, "gateway-image", "ai-flight-recorder:local", "Flight gateway OCI image")
 	return command
 }
 

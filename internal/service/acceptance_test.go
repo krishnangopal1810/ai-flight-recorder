@@ -59,7 +59,7 @@ func TestAFRT04RecordedExternalResponseIsSubstitutedOffline(t *testing.T) {
 	if err := repo.PutCapsule(ctx, types.RunCapsule{CapsuleID: "response-owner", TraceID: "trace", StartTime: time.Unix(1, 0).UTC(), TerminalStatus: "ok"}, map[string][]byte{digest: response}); err != nil {
 		t.Fatal(err)
 	}
-	replays := NewReplayService(repo, nil, nil, acceptanceRunner{}, NewDiffService(), nil)
+	replays := NewReplayService(repo, nil, nil, acceptanceRunner{}, NewDiffService(), nil, "")
 	envelope, substitutions, live, hosts, err := replays.envelope(ctx, source, types.ReplayPlan{SchemaVersion: types.SchemaVersion})
 	if err != nil {
 		t.Fatal(err)
@@ -107,7 +107,7 @@ func TestAFRT10SandboxedMutationRequiresDeclarationAndFlag(t *testing.T) {
 		Provenance:   types.Provenance{Entrypoint: &types.Entrypoint{Command: []string{"/agent"}, Image: image, Sandboxes: map[string]string{"email-test": "https://mail.test.invalid"}}},
 		Boundaries:   []types.Boundary{{LogicalKey: "email.send", ReplayPolicy: "live", SideEffect: "mutating", Sandbox: "email-test"}},
 	}
-	replays := NewReplayService(nil, nil, nil, acceptanceRunner{}, nil, nil)
+	replays := NewReplayService(nil, nil, nil, acceptanceRunner{}, nil, nil, "")
 	err := replays.Preflight(context.Background(), source, types.CreateReplayRequest{})
 	var flightErr *types.FlightError
 	if !errors.As(err, &flightErr) || flightErr.Code != types.ErrUnsafeReplay {

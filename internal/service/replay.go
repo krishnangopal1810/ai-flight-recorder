@@ -23,17 +23,18 @@ type CandidateCapture interface {
 }
 
 type ReplayService struct {
-	repository  repository.Repository
-	capsules    *CapsuleService
-	receiver    CandidateCapture
-	runner      oci.Runner
-	diffs       *DiffService
-	credentials map[string]string
-	clock       func() time.Time
+	repository   repository.Repository
+	capsules     *CapsuleService
+	receiver     CandidateCapture
+	runner       oci.Runner
+	diffs        *DiffService
+	credentials  map[string]string
+	gatewayImage string
+	clock        func() time.Time
 }
 
-func NewReplayService(repo repository.Repository, capsules *CapsuleService, receiver CandidateCapture, runner oci.Runner, diffs *DiffService, credentials map[string]string) *ReplayService {
-	return &ReplayService{repository: repo, capsules: capsules, receiver: receiver, runner: runner, diffs: diffs, credentials: credentials, clock: func() time.Time { return time.Now().UTC() }}
+func NewReplayService(repo repository.Repository, capsules *CapsuleService, receiver CandidateCapture, runner oci.Runner, diffs *DiffService, credentials map[string]string, gatewayImage string) *ReplayService {
+	return &ReplayService{repository: repo, capsules: capsules, receiver: receiver, runner: runner, diffs: diffs, credentials: credentials, gatewayImage: defaultGatewayImage(gatewayImage), clock: func() time.Time { return time.Now().UTC() }}
 }
 
 func (s *ReplayService) Create(ctx context.Context, request types.CreateReplayRequest) (types.Job, error) {
@@ -80,7 +81,7 @@ func (s *ReplayService) Create(ctx context.Context, request types.CreateReplayRe
 	if err != nil {
 		return types.Job{}, err
 	}
-	jobRequest := types.ReplayJobRequest{Plan: plan, Envelope: envelope, GatewayImage: defaultGatewayImage(request.GatewayImage), AllowedHosts: allowedHosts}
+	jobRequest := types.ReplayJobRequest{Plan: plan, Envelope: envelope, GatewayImage: s.gatewayImage, AllowedHosts: allowedHosts}
 	encoded, _ := json.Marshal(jobRequest)
 	now := s.clock()
 	job := types.Job{ID: uuid.NewString(), Kind: "replay", State: types.JobQueued, Request: encoded, CreatedAt: now, UpdatedAt: now}

@@ -38,10 +38,12 @@ func TestDockerRunnerTransfersReplayFilesThroughOCIAPI(t *testing.T) {
 		t.Fatalf("runner used a daemon-host bind mount:\n%s", logText)
 	}
 	for _, required := range []string{
+		"run -i --name flight-remote-daemon-contract-app",
 		"volume create flight-remote-daemon-contract-plan",
 		"cp ",
 		"type=volume,src=flight-remote-daemon-contract-plan,dst=/run/flight/plan,readonly",
 		"FLIGHT_REPLAY_PLAN=/run/flight/plan/replay-plan.json",
+		"--entrypoint /agent candidate:test",
 		"--entrypoint /flight-gateway gateway:test",
 		"exec flight-remote-daemon-contract-gateway /flight-gateway healthcheck",
 		"exec flight-remote-daemon-contract-gateway /flight-gateway export-captures",
@@ -87,8 +89,10 @@ func TestDockerRunnerStartsEvaluatorGatewayWithExplicitEntrypoint(t *testing.T) 
 		t.Fatal(err)
 	}
 	for _, required := range []string{
+		"run -i --name flight-evaluator-gateway-contract",
 		"--entrypoint /flight-gateway gateway:test",
 		"exec flight-evaluator-gateway-contract-gateway /flight-gateway healthcheck",
+		"--entrypoint /evaluator evaluator:test",
 	} {
 		if !strings.Contains(string(logData), required) {
 			t.Fatalf("evaluator command log is missing %q:\n%s", required, logData)

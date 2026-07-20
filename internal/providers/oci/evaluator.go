@@ -52,7 +52,7 @@ func (r *DockerRunner) Evaluate(ctx context.Context, spec EvaluatorSpec) (Evalua
 	}
 	defer cleanup()
 
-	args := []string{"run", "--name", name, "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--pids-limit", "64", "--user", "65532:65532", "--tmpfs", "/tmp:rw,noexec,nosuid,size=32m"}
+	args := []string{"run", "-i", "--name", name, "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--pids-limit", "64", "--user", "65532:65532", "--tmpfs", "/tmp:rw,noexec,nosuid,size=32m"}
 	allowed := uniqueHosts(spec.AllowedHosts)
 	if len(allowed) == 0 {
 		args = append(args, "--network", "none")
@@ -92,8 +92,8 @@ func (r *DockerRunner) Evaluate(ctx context.Context, spec EvaluatorSpec) (Evalua
 		}
 		args = append(args, "-e", key)
 	}
-	args = append(args, spec.Image)
-	args = append(args, spec.Command...)
+	args = append(args, "--entrypoint", spec.Command[0], spec.Image)
+	args = append(args, spec.Command[1:]...)
 
 	runCtx := ctx
 	if spec.Timeout > 0 {
