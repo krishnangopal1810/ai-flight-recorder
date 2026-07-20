@@ -37,6 +37,7 @@ jobs:
           cache-dependency-path: |
             web/package-lock.json
             sdk/typescript/package-lock.json
+            examples/reference-typescript/package-lock.json
       - uses: astral-sh/setup-uv@v6
       - run: make bootstrap
       - run: cd web && npx playwright install --with-deps chromium

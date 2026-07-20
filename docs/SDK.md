@@ -28,3 +28,11 @@ During replay, `FLIGHT_REPLAY_PLAN` points at the read-only envelope and `FLIGHT
 ## Executable Python reference
 
 `examples/reference-python/agent.py` is the executable conformance agent used by `make harness-check`. Its image is built from `examples/reference-python/Dockerfile`, reads one JSON request from stdin, enriches standard OTLP spans through this SDK, and registers its exact argv entrypoint, immutable image ID, and model host. Recording mode supplies a deterministic API fixture and calls the deterministic model service. The first replay keeps only that model route live while the API callback points at an unavailable host. A second replay substitutes both boundaries, points the model callback at an unavailable host, and records that it was not invoked. A third replay changes the canonical API request and retains a failed candidate whose output proves the API callback was never invoked.
+
+## Executable TypeScript reference
+
+`examples/reference-typescript/agent.ts` mirrors the Python execution through the native TypeScript SDK and the OpenTelemetry JavaScript OTLP/HTTP JSON exporter. `make harness-check` compares both source capsules' root input/output digests and complete boundary identity, request, response, parent, and policy projections. It then runs the registered Node entrypoint in OCI with both boundaries substituted and verifies the linked exact candidate reports that the live model callback was not invoked.
+
+The same executable has a deterministic metadata-failure fixture. It opts the root into capture, passes a non-JSON argv value to `registerEntrypoint`, and still returns the production answer. The retained warning contains only the operation and error type; the capsule remains playback-ready, reports `entrypoint_missing` for replay, and the replay API fails with the stable `incomplete_capsule` category.
+
+OTLP/HTTP JSON encodes trace and span IDs as hexadecimal strings rather than the base64 representation used by standard protobuf JSON. The collector and trusted replay gateway normalize those IDs once at their transport boundaries before using the typed protobuf request.

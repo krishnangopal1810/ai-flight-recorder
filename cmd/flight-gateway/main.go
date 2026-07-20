@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/krishnangopal1810/ai-flight-recorder/internal/config"
+	"github.com/krishnangopal1810/ai-flight-recorder/internal/providers/otlpjson"
 	collectortrace "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
@@ -147,7 +148,10 @@ func (g *gateway) captureOTLP(writer http.ResponseWriter, request *http.Request)
 	var export collectortrace.ExportTraceServiceRequest
 	jsonEncoding := strings.HasPrefix(strings.ToLower(request.Header.Get("Content-Type")), "application/json")
 	if jsonEncoding {
-		err = protojson.Unmarshal(data, &export)
+		data, err = otlpjson.NormalizeIDs(data)
+		if err == nil {
+			err = protojson.Unmarshal(data, &export)
+		}
 	} else {
 		err = proto.Unmarshal(data, &export)
 	}

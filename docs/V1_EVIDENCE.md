@@ -9,7 +9,7 @@ This is the requirement-by-requirement completion ledger for the active V1 plan.
 | AFR-CAP-003 | `make integration`, policy/capture tests | Partial | Full content classes, typed serialization/limit omissions, offline replay |
 | AFR-CAP-004 | `make e2e`, bundle round trip | Partial | Compatible unknown-field preservation and atomic unsupported-major import |
 | AFR-ING-001 | `make integration`, OTLP HTTP/gRPC agent fixture | Partial | All GenAI/OpenInference kinds, convention metadata, malformed mixed batches on both transports |
-| AFR-ING-002 | `make test`; Python reference agent in `make harness-check` exports standard OTLP and replays through the native SDK | Partial | Equivalent executable TypeScript reference agent and end-to-end incomplete-metadata diagnostic |
+| AFR-ING-002 | `make harness-check` executes equivalent Python and TypeScript standard-OTLP agents, compares their logical capsules, replays both through their native SDKs, and proves a TypeScript metadata failure remains payload-free and nonfatal while marking replay incomplete | Proven | — |
 | AFR-ING-003 | `make test`, completeness unit tests | Partial | Boundary-by-boundary playback/replay/diff/bisect reports through API, CLI, and UI |
 | AFR-SEC-001 | `make security`, local seeded-secret store scan | Partial | Hosted DB/object store, bundles, indexes, logs, metrics, traces, diagnostics, and quarantine scan |
 | AFR-SEC-002 | architecture telemetry lint | Partial | Captured operational telemetry egress scan and exporter fail-closed behavior |

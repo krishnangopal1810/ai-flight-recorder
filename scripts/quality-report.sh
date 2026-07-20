@@ -3,7 +3,7 @@ set -euo pipefail
 
 go_tests=$(go test ./... >/dev/null 2>&1 && echo pass || echo fail)
 python_sdk=$(cd sdk/python && uv run ruff check src tests ../../examples/reference-python >/dev/null 2>&1 && uv run mypy src ../../examples/reference-python >/dev/null 2>&1 && uv run pytest -q >/dev/null 2>&1 && echo pass || echo fail)
-typescript_sdk=$(cd sdk/typescript && npm test -- --run >/dev/null 2>&1 && echo pass || echo fail)
+typescript_sdk=$(cd sdk/typescript && npm test -- --run >/dev/null 2>&1 && cd ../../examples/reference-typescript && npm test >/dev/null 2>&1 && echo pass || echo fail)
 inspector=$(cd web && npm test -- --run >/dev/null 2>&1 && echo pass || echo fail)
 contracts=$(go test -tags=integration ./tests/conformance/... >/dev/null 2>&1 && echo pass || echo fail)
 security=$(make --no-print-directory security >/dev/null 2>&1 && echo pass || echo fail)

@@ -1,0 +1,166 @@
+import { SpanStatusCode, trace } from "@opentelemetry/api";
+import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
+import { detectResources, envDetector, resourceFromAttributes } from "@opentelemetry/resources";
+import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base";
+import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
+import { boundary, registerEntrypoint, setRunProvenance } from "@ai-flight-recorder/sdk";
+import canonicalize from "canonicalize";
+
+const NORMAL_PROJECT_ID = "reference-replay-typescript";
+const DIAGNOSTIC_PROJECT_ID = "reference-replay-typescript-diagnostic";
+const SERVICE_NAME = "typescript-reference-agent";
+const ENTRYPOINT = ["node", "/app/dist/agent.js"];
+const RECORDED_POLICY = { rule: "refunds within 30 days" };
+const MODEL_HOST = "fake-deps";
+const MODEL_ENDPOINT = `http://${MODEL_HOST}:9099/v1/chat/completions`;
+
+interface AgentInput { policy_id: string }
+interface PolicyResponse { rule: string }
+interface ModelResponse { response: { choices: Array<{ message: { content: string } }> } }
+
+function canonical(value: unknown): string {
+  const encoded = canonicalize(value);
+  if (encoded === undefined) throw new Error("value is not canonical JSON");
+  return encoded;
+}
+
+function configureTracing(projectId: string): NodeTracerProvider {
+  const endpoint = `${requiredEnv("OTEL_EXPORTER_OTLP_ENDPOINT").replace(/\/$/, "")}/v1/traces`;
+  const token = process.env.FLIGHT_OTLP_TOKEN;
+  const provider = new NodeTracerProvider({
+    resource: detectResources({ detectors: [envDetector] }).merge(resourceFromAttributes({
+      "service.name": SERVICE_NAME,
+      "flight.project.id": projectId,
+      "flight.capture": true,
+      "flight.sdk.language": "typescript",
+    })),
+    spanProcessors: [new BatchSpanProcessor(new OTLPTraceExporter({
+      url: endpoint,
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }))],
+  });
+  provider.register();
+  return provider;
+}
+
+async function readInput(): Promise<AgentInput> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));
+  return JSON.parse(Buffer.concat(chunks).toString("utf8")) as AgentInput;
+}
+
+function requiredEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is required`);
+  return value;
+}
+
+async function run(): Promise<number> {
+  const input = await readInput();
+  const diagnosticFixture = process.env.FLIGHT_METADATA_FAILURE_FIXTURE === "1";
+  const provider = configureTracing(diagnosticFixture ? DIAGNOSTIC_PROJECT_ID : NORMAL_PROJECT_ID);
+  const tracer = trace.getTracer("ai-flight-recorder.reference-typescript", "1.0");
+  let callbackInvoked = false;
+  let modelCallbackInvoked = false;
+  let exitCode = 0;
+
+  await tracer.startActiveSpan("answer-policy", async root => {
+    root.setAttribute("openinference.span.kind", "AGENT");
+    root.setAttribute("flight.logical_key", "agent.answer");
+    root.setAttribute("input.value", canonical(input));
+    setRunProvenance({
+      projectId: diagnosticFixture ? DIAGNOSTIC_PROJECT_ID : NORMAL_PROJECT_ID,
+      commitSha: "a".repeat(40),
+    });
+    if (diagnosticFixture) {
+      registerEntrypoint([1n as unknown as string]);
+    } else {
+      registerEntrypoint(ENTRYPOINT, {
+        image: process.env.FLIGHT_REFERENCE_IMAGE,
+        modelHosts: [MODEL_HOST],
+        inputMode: "stdin_json",
+        outputMode: "stdout_json",
+      });
+    }
+
+    const policyRequest: Record<string, string> = { policy_id: input.policy_id };
+    if (process.env.FLIGHT_REPLAY_MODEL === "mismatch-request") policyRequest.policy_id = "changed";
+
+    try {
+      const policy = await tracer.startActiveSpan("policy-lookup", async span => {
+        span.setAttribute("openinference.span.kind", "TOOL");
+        try {
+          return await boundary<PolicyResponse>(policyRequest, async () => {
+            callbackInvoked = true;
+            if (process.env.FLIGHT_RECORDING_FIXTURE === "1") return RECORDED_POLICY;
+            throw new Error("recorded API dependency is unavailable");
+          }, {
+            logicalKey: "api.policy",
+            boundaryClass: "api",
+            sideEffect: "read_only",
+            replayPolicy: "substitute",
+            parentLogicalKey: "agent.answer",
+          });
+        } finally {
+          span.end();
+        }
+      });
+
+      const modelRequest = {
+        model: "flight-fake-v1",
+        messages: [{ role: "user", content: input.policy_id }],
+      };
+      const modelResponse = await tracer.startActiveSpan("model-call", async span => {
+        span.setAttribute("openinference.span.kind", "LLM");
+        try {
+          return await boundary<ModelResponse>(modelRequest, async () => {
+            modelCallbackInvoked = true;
+            const endpoint = process.env.FLIGHT_REPLAY_MODEL === "substitute-only"
+              ? "http://unavailable.invalid/v1/chat/completions"
+              : MODEL_ENDPOINT;
+            const response = await fetch(endpoint, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: canonical(modelRequest),
+            });
+            if (!response.ok) throw new Error(`model request failed with ${response.status}`);
+            return await response.json() as ModelResponse;
+          }, {
+            logicalKey: "llm.answer",
+            boundaryClass: "llm",
+            sideEffect: "read_only",
+            replayPolicy: "live",
+            parentLogicalKey: "agent.answer",
+          });
+        } finally {
+          span.end();
+        }
+      });
+
+      const result = {
+        answer: `${policy.rule}; ${modelResponse.response.choices[0]?.message.content ?? ""}`,
+      };
+      root.setAttribute("flight.reference.model_callback_invoked", modelCallbackInvoked);
+      root.setAttribute("output.value", canonical(result));
+      process.stdout.write(`${canonical(result)}\n`);
+    } catch (error) {
+      const result = {
+        error: error instanceof Error ? error.message : "unknown boundary error",
+        live_callback_invoked: callbackInvoked,
+      };
+      root.setAttribute("output.value", canonical(result));
+      root.setAttribute("flight.reference.model_callback_invoked", modelCallbackInvoked);
+      root.setStatus({ code: SpanStatusCode.ERROR, message: "required replay boundary did not match" });
+      process.stdout.write(`${canonical(result)}\n`);
+      exitCode = 17;
+    } finally {
+      root.end();
+    }
+  });
+
+  await provider.forceFlush();
+  await provider.shutdown();
+  return exitCode;
+}
+
+process.exitCode = await run();

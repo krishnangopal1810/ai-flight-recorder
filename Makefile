@@ -20,7 +20,8 @@ help:
 bootstrap:
 	go mod download
 	cd sdk/python && uv sync --all-groups --all-extras --frozen
-	cd sdk/typescript && npm ci
+	cd sdk/typescript && npm ci && npm run build
+	cd examples/reference-typescript && npm ci --install-links
 	cd web && npm ci
 
 harness-check:
@@ -37,6 +38,7 @@ generate:
 build:
 	go build ./...
 	cd sdk/typescript && npm run build
+	cd examples/reference-typescript && npm run build
 	cd web && npm run build
 	cd sdk/python && uv run python -m compileall -q src
 
@@ -44,6 +46,7 @@ test:
 	go test ./...
 	cd sdk/python && uv run ruff check src tests ../../examples/reference-python && uv run mypy src ../../examples/reference-python && uv run pytest
 	cd sdk/typescript && npm test
+	cd examples/reference-typescript && npm test
 	cd web && npm test
 
 integration:

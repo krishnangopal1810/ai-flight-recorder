@@ -11,6 +11,8 @@ web/node_modules/
 web/dist/
 sdk/typescript/node_modules/
 sdk/typescript/dist/
+examples/reference-typescript/node_modules/
+examples/reference-typescript/dist/
 sdk/python/.venv/
 sdk/python/.pytest_cache/
 sdk/python/**/__pycache__/

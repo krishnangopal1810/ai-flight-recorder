@@ -22,6 +22,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/krishnangopal1810/ai-flight-recorder/internal/config"
+	"github.com/krishnangopal1810/ai-flight-recorder/internal/providers/otlpjson"
 	"github.com/krishnangopal1810/ai-flight-recorder/internal/runtime/otlp"
 	"github.com/krishnangopal1810/ai-flight-recorder/internal/service"
 	"github.com/krishnangopal1810/ai-flight-recorder/internal/types"
@@ -364,7 +365,10 @@ func (s *Server) otlpHTTP(writer http.ResponseWriter, request *http.Request) {
 	}
 	var exportRequest collectortrace.ExportTraceServiceRequest
 	if jsonEncoding {
-		err = protojson.Unmarshal(data, &exportRequest)
+		data, err = otlpjson.NormalizeIDs(data)
+		if err == nil {
+			err = protojson.Unmarshal(data, &exportRequest)
+		}
 	} else {
 		err = proto.Unmarshal(data, &exportRequest)
 	}
