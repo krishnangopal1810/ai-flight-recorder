@@ -69,7 +69,7 @@ func New(ctx context.Context, cfg config.Config) (*Application, error) {
 	receiver := otlp.NewReceiver(capsules, cfg.Server.LateSpanGrace)
 	replayReceiver := otlp.NewReceiver(capsules)
 	ociRunner := oci.NewDockerRunner(cfg.Runtime.OCIBinary)
-	replays := service.NewReplayService(repo, capsules, replayReceiver, ociRunner, diffs, cfg.Runtime.ReplayCredentials)
+	replays := service.NewReplayService(repo, capsules, replayReceiver, ociRunner, diffs, cfg.Runtime.ReplayCredentials, cfg.Runtime.GatewayImage)
 	evaluators := service.NewEvaluatorService(repo, capsules, diffs, ociRunner, cfg.Runtime.ReplayCredentials)
 	jobs := service.NewJobService(repo, replays)
 	apiServer := api.NewServer(cfg, capsules, bundles, diffs, auth, replays, evaluators, jobs, receiver, logger)

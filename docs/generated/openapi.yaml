@@ -152,7 +152,6 @@ components:
         repetitions: {type: integer, minimum: 1, maximum: 50}
         pass_threshold: {type: number, minimum: 0, maximum: 1}
         environment: {type: array, items: {type: string}}
-        gateway_image: {type: string}
     Job:
       type: object
       required: [id, kind, state, request, created_at, updated_at]

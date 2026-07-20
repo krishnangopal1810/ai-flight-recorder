@@ -24,3 +24,7 @@ Equivalent APIs cover run provenance, argv entrypoint registration, artifact att
 Boundary occurrence is counted by aligned parent, boundary class, and logical key. A substitution additionally requires the canonical request digest. JSON-pointer ignore rules are explicit and versioned; neither SDK falls through to a live call when a match is missing or ambiguous.
 
 During replay, `FLIGHT_REPLAY_PLAN` points at the read-only envelope and `FLIGHT_WORKSPACE` points at ephemeral writable space. `FLIGHT_REPLAY_MODEL`, when set with `flight replay --model`, is the selected candidate model name. Credentials remain worker configuration and are only passed for environment names declared by `flight.yaml`.
+
+## Executable Python reference
+
+`examples/reference-python/agent.py` is the executable conformance agent used by `make harness-check`. Its image is built from `examples/reference-python/Dockerfile`, reads one JSON request from stdin, enriches standard OTLP spans through this SDK, and registers its exact argv entrypoint and immutable image ID. Recording mode supplies a deterministic API fixture. Replay mode points the live callback at an unavailable host, so the successful exact replay is possible only through recorded boundary substitution. A second replay changes the canonical request and retains a failed candidate whose output proves the callback was never invoked.

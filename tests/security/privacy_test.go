@@ -75,7 +75,7 @@ func TestAFRT09MutatingLiveBoundaryFailsPreflight(t *testing.T) {
 	if err := repo.PutCapsule(ctx, capsule, payloads); err != nil {
 		t.Fatal(err)
 	}
-	replays := service.NewReplayService(repo, capsules, nil, safeRunner{}, service.NewDiffService(), nil)
+	replays := service.NewReplayService(repo, capsules, nil, safeRunner{}, service.NewDiffService(), nil, "")
 	for _, mutation := range []string{"email.send", "payment.charge", "database.write", "filesystem.write"} {
 		capsule.Boundaries[0].LogicalKey = mutation
 		err = replays.Preflight(ctx, capsule, types.CreateReplayRequest{SourceCapsuleID: capsule.CapsuleID})

@@ -15,11 +15,11 @@ help:
 	@echo '  make quality            Emit the machine-readable quality report'
 	@echo '  make verify             Run every blocking repository gate'
 	@echo '  make dev-up/dev-down    Start or tear down this worktree stack'
-	@echo '  make observe QUERY=...  Query logs, metrics, capsules, traces, or jobs'
+	@echo '  make observe QUERY=...  Query logs, metrics, capsules, traces, or job events'
 
 bootstrap:
 	go mod download
-	cd sdk/python && uv sync --all-groups --frozen
+	cd sdk/python && uv sync --all-groups --all-extras --frozen
 	cd sdk/typescript && npm ci
 	cd web && npm ci
 
@@ -42,7 +42,7 @@ build:
 
 test:
 	go test ./...
-	cd sdk/python && uv run ruff check src tests && uv run mypy src && uv run pytest
+	cd sdk/python && uv run ruff check src tests ../../examples/reference-python && uv run mypy src ../../examples/reference-python && uv run pytest
 	cd sdk/typescript && npm test
 	cd web && npm test
 
@@ -67,7 +67,7 @@ quality:
 	./scripts/quality-report.sh
 
 verify: harness-check architecture-check docs-check generate build test integration security e2e quality
-	git diff --exit-code -- docs/generated web/src/generated/openapi.ts
+	./scripts/harness-check.sh --static
 
 dev-up:
 	./scripts/dev-stack.sh up

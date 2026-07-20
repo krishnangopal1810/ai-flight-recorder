@@ -129,7 +129,7 @@ func (r *DockerRunner) Run(ctx context.Context, spec RunSpec) (RunResult, error)
 		}
 	}
 
-	args := []string{"run", "--name", application, "--network", network, "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--pids-limit", "128", "--user", "65532:65532", "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m", "--tmpfs", "/run/flight/workspace:rw,nosuid,size=256m", "--mount", "type=volume,src=" + planVolume + ",dst=/run/flight/plan,readonly", "-e", "FLIGHT_REPLAY_PLAN=/run/flight/plan/replay-plan.json", "-e", "FLIGHT_WORKSPACE=/run/flight/workspace", "-e", "FLIGHT_CAPTURE=true", "-e", "OTEL_EXPORTER_OTLP_ENDPOINT=http://" + gateway + ":8080", "-e", "HTTP_PROXY=http://" + gateway + ":8080", "-e", "HTTPS_PROXY=http://" + gateway + ":8080", "-e", "NO_PROXY=" + gateway}
+	args := []string{"run", "-i", "--name", application, "--network", network, "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--pids-limit", "128", "--user", "65532:65532", "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m", "--tmpfs", "/run/flight/workspace:rw,nosuid,size=256m", "--mount", "type=volume,src=" + planVolume + ",dst=/run/flight/plan,readonly", "-e", "FLIGHT_REPLAY_PLAN=/run/flight/plan/replay-plan.json", "-e", "FLIGHT_WORKSPACE=/run/flight/workspace", "-e", "FLIGHT_CAPTURE=true", "-e", "OTEL_EXPORTER_OTLP_ENDPOINT=http://" + gateway + ":8080", "-e", "HTTP_PROXY=http://" + gateway + ":8080", "-e", "HTTPS_PROXY=http://" + gateway + ":8080", "-e", "NO_PROXY=" + gateway, "--entrypoint", spec.Command[0]}
 	if spec.WorkingDir != "" {
 		args = append(args, "--workdir", spec.WorkingDir)
 	}
@@ -154,7 +154,7 @@ func (r *DockerRunner) Run(ctx context.Context, spec RunSpec) (RunResult, error)
 		args = append(args, "-e", key)
 	}
 	args = append(args, spec.Image)
-	args = append(args, spec.Command...)
+	args = append(args, spec.Command[1:]...)
 	runCtx := ctx
 	if spec.Timeout > 0 {
 		var cancel context.CancelFunc

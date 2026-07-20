@@ -54,6 +54,36 @@ func TestReceiverCreatesReplayAwareCapsuleFromOTLP(t *testing.T) {
 	}
 }
 
+func TestReceiverRequiresExplicitBoundaryNamespace(t *testing.T) {
+	ctx := context.Background()
+	directory := t.TempDir()
+	repo, err := repository.OpenLocal(ctx, filepath.Join(directory, "flight.db"), filepath.Join(directory, "blobs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	policy, _ := service.NewPolicyEngine(config.CapturePolicy{Version: "1", Mode: "strict", MaxFieldSize: 1 << 20})
+	receiver := NewReceiver(service.NewCapsuleService(repo, policy))
+	traceID := make([]byte, 16)
+	traceID[15] = 2
+	rootID, childID := make([]byte, 8), make([]byte, 8)
+	rootID[7], childID[7] = 1, 2
+	request := &collectortrace.ExportTraceServiceRequest{ResourceSpans: []*tracev1.ResourceSpans{{
+		Resource: &resourcev1.Resource{Attributes: []*commonv1.KeyValue{stringKV("service.name", "agent"), stringKV("flight.project.id", "demo"), boolKV("flight.capture", true)}},
+		ScopeSpans: []*tracev1.ScopeSpans{{Spans: []*tracev1.Span{
+			{TraceId: traceID, SpanId: rootID, Name: "root", Attributes: []*commonv1.KeyValue{stringKV("flight.logical_key", "agent.root")}},
+			{TraceId: traceID, SpanId: childID, ParentSpanId: rootID, Name: "api", Attributes: []*commonv1.KeyValue{stringKV("flight.logical_key", "api.policy"), stringKV("flight.boundary.logical_key", "api.policy"), stringKV("flight.boundary.class", "api")}},
+		}}},
+	}}}
+	capsules, rejected, err := receiver.Capture(ctx, request)
+	if err != nil || rejected != 0 || len(capsules) != 1 {
+		t.Fatalf("capture: %#v rejected=%d err=%v", capsules, rejected, err)
+	}
+	if len(capsules[0].Boundaries) != 1 || capsules[0].Boundaries[0].LogicalKey != "api.policy" {
+		t.Fatalf("logical operations leaked into boundaries: %#v", capsules[0].Boundaries)
+	}
+}
+
 func TestReceiverMergesCrossBatchChildrenDuringLateSpanGrace(t *testing.T) {
 	ctx := context.Background()
 	directory := t.TempDir()

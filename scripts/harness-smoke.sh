@@ -139,18 +139,6 @@ run_step traces ./scripts/observe.sh traces "${capsule_ids[0]}"
 run_step playback go run ./cmd/flight --url "$base_url" --token "$token" --json playback "${capsule_ids[0]}"
 run_step diff go run ./cmd/flight --url "$base_url" --token "$token" --json diff "${capsule_ids[0]}" "${capsule_ids[1]}"
 
-step="create-job"
-curl --fail --silent --show-error \
-  -H "Authorization: Bearer ${token}" -H 'Content-Type: application/json' \
-  --data "{\"source_capsule_id\":\"${capsule_ids[0]}\",\"gateway_image\":\"ai-flight-recorder:local\"}" \
-  "$base_url/api/v1/replays" >"$artifact_root/job-created.json"
-job_id=$(python3 - "$artifact_root/job-created.json" <<'PY'
-import json, sys
-print(json.load(open(sys.argv[1]))["id"])
-PY
-)
-run_step jobs ./scripts/observe.sh jobs "$job_id"
-
 step="live-inspector"
 failure_classification="product_defect"
 (cd web && \
@@ -161,6 +149,8 @@ failure_classification="product_defect"
     tail -100 "$artifact_root/live-inspector.log" >&2 || true
     exit 1
   }
+
+run_step reference-replay ./scripts/reference-replay-smoke.sh "$artifact_root/reference-replay"
 
 step="teardown-stack"
 failure_classification="harness_capability_gap"

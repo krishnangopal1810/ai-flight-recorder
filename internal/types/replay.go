@@ -15,7 +15,6 @@ type CreateReplayRequest struct {
 	Repetitions               int      `json:"repetitions,omitempty"`
 	PassThreshold             float64  `json:"pass_threshold,omitempty"`
 	Environment               []string `json:"environment,omitempty"`
-	GatewayImage              string   `json:"gateway_image,omitempty"`
 }
 
 type BisectRequest struct {

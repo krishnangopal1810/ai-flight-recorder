@@ -63,6 +63,7 @@ services:
       FLIGHT_LOCAL_BYPASS: "false"
       FLIGHT_BEHIND_TLS_PROXY: "true"
       FLIGHT_BOOTSTRAP_TOKEN: frt_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+      FLIGHT_GATEWAY_IMAGE: "${COMPOSE_PROJECT_NAME}-flight:latest"
     # The coordinator requires the engine socket; replayed application
     # containers never receive this mount and always run non-root/capability-free.
     user: "0:0"

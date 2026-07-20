@@ -314,7 +314,6 @@ export interface components {
             repetitions?: number;
             pass_threshold?: number;
             environment?: string[];
-            gateway_image?: string;
         };
         Job: {
             /** Format: uuid */
