@@ -63,13 +63,13 @@ PY
 }
 
 create_replay() {
-  local source_id="$1" model="$2" output="$3"
+  local source_id="$1" model="$2" substitute_llm="$3" output="$4"
   local request_output="${output%.json}-request.json"
-  python3 - "$source_id" "$model" >"$request_output" <<'PY'
+  python3 - "$source_id" "$model" "$substitute_llm" >"$request_output" <<'PY'
 import json, sys
 request = {
     "source_capsule_id": sys.argv[1],
-    "substitute_llm": False,
+    "substitute_llm": sys.argv[3] == "true",
     "allow_sandboxed_side_effects": False,
 }
 if sys.argv[2]:
@@ -137,14 +137,16 @@ assert capsule["terminal_status"] == "ok", capsule
 assert capsule["completeness"]["replay"]["state"] == "ready", capsule["completeness"]
 assert capsule["provenance"]["entrypoint"]["image"] == sys.argv[2], capsule["provenance"]
 assert capsule["provenance"]["entrypoint"]["command"] == ["python", "/app/agent.py"]
-assert [boundary["logical_key"] for boundary in capsule["boundaries"]] == ["api.policy"], capsule["boundaries"]
-boundary = capsule["boundaries"][0]
-assert boundary["parent_logical_key"] == "agent.answer", boundary
-assert boundary["replay_policy"] == "substitute", boundary
-assert boundary["response"]["state"] == "captured", boundary
+assert capsule["provenance"]["entrypoint"]["model_hosts"] == ["fake-deps"]
+assert [boundary["logical_key"] for boundary in capsule["boundaries"]] == ["api.policy", "llm.answer"], capsule["boundaries"]
+assert [boundary["replay_policy"] for boundary in capsule["boundaries"]] == ["substitute", "live"]
+assert all(boundary["parent_logical_key"] == "agent.answer" for boundary in capsule["boundaries"])
+assert all(boundary["response"]["state"] == "captured" for boundary in capsule["boundaries"])
+root = next(item for item in capsule["operations"] if item["logical_key"] == "agent.answer")
+assert root["attributes"]["flight.reference.model_callback_invoked"] == "true", root
 PY
 
-create_replay "$source_id" "" "$artifact_root/exact-job-created.json"
+create_replay "$source_id" "" false "$artifact_root/exact-job-created.json"
 exact_job_id=$(python3 - "$artifact_root/exact-job-created.json" <<'PY'
 import json, sys
 print(json.load(open(sys.argv[1]))["id"])
@@ -157,12 +159,13 @@ import json, sys
 job = json.load(open(sys.argv[1]))
 assert job["state"] == "completed", job
 assert job["request"]["gateway_image"] == sys.argv[4], job["request"]
+assert job["request"]["allowed_hosts"] == ["fake-deps"], job["request"]
 assert job["request"]["plan"]["plan_digest"].startswith("sha256:"), job["request"]
 result = job["result"]
 assert result["source_capsule_id"] == sys.argv[2], result
 assert result["candidate_image"] == sys.argv[3], result
 assert result["substitutions"] == ["api.policy"], result
-assert result.get("live_boundaries", []) == [], result
+assert result["live_boundaries"] == ["llm.answer"], result
 assert result["outcome"] == "exact", result
 assert result["exit_code"] == 0, result
 assert len(result["trials"]) == 1 and result["trials"][0]["outcome"] == "exact", result
@@ -173,7 +176,7 @@ for line in open(sys.argv[5]):
 assert len(events) == 3, events
 assert events[0]["plan_digest"].startswith("sha256:"), events[0]
 assert events[0]["substitutions"] == ["api.policy"], events[0]
-assert events[0].get("live_boundaries", []) == [], events[0]
+assert events[0]["live_boundaries"] == ["llm.answer"], events[0]
 assert events[1]["outcome"] == "exact", events[1]
 assert events[2]["outcome"] == "exact", events[2]
 candidate = result["candidate_capsule_id"]
@@ -188,11 +191,13 @@ import json, sys
 source, candidate = (json.load(open(path)) for path in sys.argv[1:3])
 assert candidate["source_capsule_id"] == sys.argv[3], candidate
 assert candidate["terminal_status"] == "ok", candidate
-assert [item["logical_key"] for item in candidate["boundaries"]] == ["api.policy"], candidate["boundaries"]
+assert [item["logical_key"] for item in candidate["boundaries"]] == ["api.policy", "llm.answer"], candidate["boundaries"]
 def root_output(capsule):
     return next(item["output"]["digest"] for item in capsule["operations"] if item["logical_key"] == "agent.answer")
 assert root_output(source) == root_output(candidate), (root_output(source), root_output(candidate))
-assert source["boundaries"][0]["response"]["digest"] == candidate["boundaries"][0]["response"]["digest"]
+assert [item["response"]["digest"] for item in source["boundaries"]] == [item["response"]["digest"] for item in candidate["boundaries"]]
+root = next(item for item in candidate["operations"] if item["logical_key"] == "agent.answer")
+assert root["attributes"]["flight.reference.model_callback_invoked"] == "true", root
 PY
 authorized_curl -H 'Content-Type: application/json' \
   --data "{\"baseline_capsule_id\":\"$source_id\",\"candidate_capsule_id\":\"$exact_candidate_id\"}" \
@@ -203,7 +208,44 @@ diff = json.load(open(sys.argv[1]))
 assert all(item["kind"] == "provenance_changed" for item in (diff.get("observations") or [])), diff
 PY
 
-create_replay "$source_id" "mismatch-request" "$artifact_root/mismatch-job-created.json"
+create_replay "$source_id" "substitute-only" true "$artifact_root/all-substituted-job-created.json"
+all_substituted_job_id=$(python3 - "$artifact_root/all-substituted-job-created.json" <<'PY'
+import json, sys
+print(json.load(open(sys.argv[1]))["id"])
+PY
+)
+wait_for_job "$all_substituted_job_id" "$artifact_root/all-substituted-job.json"
+authorized_curl "$base_url/api/v1/jobs/$all_substituted_job_id/events" >"$artifact_root/all-substituted-job-events.sse"
+all_substituted_candidate_id=$(python3 - "$artifact_root/all-substituted-job.json" "$source_id" <<'PY'
+import json, sys
+job = json.load(open(sys.argv[1]))
+assert job["state"] == "completed", job
+assert job["request"]["allowed_hosts"] == [], job["request"]
+assert job["request"]["plan"]["substitute_llm"] is True, job["request"]
+result = job["result"]
+assert result["source_capsule_id"] == sys.argv[2], result
+assert result["substitutions"] == ["api.policy", "llm.answer"], result
+assert result.get("live_boundaries", []) == [], result
+assert result["outcome"] == "exact", result
+assert result["exit_code"] == 0, result
+assert len(result["trials"]) == 1 and result["trials"][0]["outcome"] == "exact", result
+print(result["candidate_capsule_id"])
+PY
+)
+printf '%s\n' "$all_substituted_candidate_id" >"$artifact_root/all-substituted-candidate-id.txt"
+authorized_curl "$base_url/api/v1/capsules/$all_substituted_candidate_id" >"$artifact_root/all-substituted-candidate.json"
+python3 - "$artifact_root/source-capsule.json" "$artifact_root/all-substituted-candidate.json" "$source_id" <<'PY'
+import json, sys
+source, candidate = (json.load(open(path)) for path in sys.argv[1:3])
+assert candidate["source_capsule_id"] == sys.argv[3], candidate
+assert candidate["terminal_status"] == "ok", candidate
+assert [item["logical_key"] for item in candidate["boundaries"]] == ["api.policy", "llm.answer"], candidate["boundaries"]
+assert [item["response"]["digest"] for item in source["boundaries"]] == [item["response"]["digest"] for item in candidate["boundaries"]]
+root = next(item for item in candidate["operations"] if item["logical_key"] == "agent.answer")
+assert root["attributes"]["flight.reference.model_callback_invoked"] == "false", root
+PY
+
+create_replay "$source_id" "mismatch-request" false "$artifact_root/mismatch-job-created.json"
 mismatch_job_id=$(python3 - "$artifact_root/mismatch-job-created.json" <<'PY'
 import json, sys
 print(json.load(open(sys.argv[1]))["id"])
@@ -220,7 +262,7 @@ result = job["result"]
 assert result["exit_code"] == 17, result
 assert result["outcome"] == "divergent", result
 assert result["substitutions"] == ["api.policy"], result
-assert result.get("live_boundaries", []) == [], result
+assert result["live_boundaries"] == ["llm.answer"], result
 assert len(result["trials"]) == 1 and result["trials"][0]["exit_code"] == 17, result
 print(result["candidate_capsule_id"])
 PY
@@ -250,6 +292,8 @@ printf '%s\n' \
   "source_capsule_id=$source_id" \
   "exact_job_id=$exact_job_id" \
   "exact_candidate_capsule_id=$exact_candidate_id" \
+  "all_substituted_job_id=$all_substituted_job_id" \
+  "all_substituted_candidate_capsule_id=$all_substituted_candidate_id" \
   "mismatch_job_id=$mismatch_job_id" \
   "mismatch_candidate_capsule_id=$mismatch_candidate_id" \
   >"$artifact_root/summary.txt"

@@ -87,7 +87,7 @@ func TestAFRT09MutatingLiveBoundaryFailsPreflight(t *testing.T) {
 }
 
 func TestAFRT09OCIContainerCannotEgressWriteHostOrReachDocker(t *testing.T) {
-	runner := oci.NewDockerRunner("docker")
+	runner := oci.NewDockerRunner("docker", "")
 	if err := runner.Available(context.Background()); err != nil {
 		if config.RequireOCISecurityContract() {
 			t.Fatalf("blocking OCI security contract is unavailable: %v", err)

@@ -17,7 +17,7 @@ This is the requirement-by-requirement completion ledger for the active V1 plan.
 | AFR-SEC-004 | repository retention tests | Partial | Project scheduling, all limit actions/classes, deletion audit, unsafe-accounting preservation |
 | AFR-PLY-001 | playback service and inspector tests | Partial | Network-disabled proof of zero application processes and outbound requests with corrupt evidence |
 | AFR-RPL-001 | `make harness-check` records and replays the Python reference entrypoint through OCI, verifies the immutable plan digest, source linkage, exact candidate, and preflight contracts | Proven | — |
-| AFR-RPL-002 | `make harness-check` proves offline non-model substitution and an unmatched request that exits without invoking its live callback | Partial | Declared live model-provider route and a second all-substituted LLM replay |
+| AFR-RPL-002 | `make harness-check` proves a declared live model route with the API substituted, a second all-substituted replay with no egress attachment, and an unmatched request that never invokes its live callback | Proven | — |
 | AFR-RPL-003 | `make security`, uncached live OCI probe plus remote-daemon-safe volume/copy contract | Partial | Instrumented/uninstrumented DB, email, payment blocks and approved live sandbox |
 | AFR-RPL-004 | outcome-classifier unit test | Partial | Three-or-more real trials with tolerances/evaluator through CLI and inspector |
 | AFR-DIF-001 | synthetic diff unit tests | Partial | Insert/delete/move/ambiguity fixtures and layered fallback alignment |
