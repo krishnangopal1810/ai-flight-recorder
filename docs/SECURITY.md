@@ -13,4 +13,4 @@ Production telemetry is hostile input. Replay source code and evaluator containe
 - Unknown and mutating boundaries are substituted or blocked unless a sandbox and explicit flag are present.
 - Secrets are allowlisted per replay and never included in capsule manifests or logs.
 
-Security tests scan files, databases, exports, logs, metrics, and quarantine records for seeded values.
+The current blocking security suite scans the local SQLite/filesystem store for a seeded value and executes the OCI isolation probe without Go's test cache. The broader hosted-store, export, observability, and quarantine scans required for V1 remain tracked in the [V1 evidence ledger](V1_EVIDENCE.md); do not infer those guarantees from the narrower current test.

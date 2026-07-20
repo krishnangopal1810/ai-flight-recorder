@@ -12,6 +12,7 @@ This directory is the system of record for engineering knowledge that is not exe
 - [Product sense](PRODUCT_SENSE.md)
 - [Quality score](QUALITY_SCORE.md)
 - [Acceptance matrix](ACCEPTANCE.md)
+- [V1 requirement evidence audit](V1_EVIDENCE.md)
 - [Operations, backup, and recovery](OPERATIONS.md)
 - [Release process](RELEASING.md)
 - [SDK and `flight.*` semantic contract](SDK.md)

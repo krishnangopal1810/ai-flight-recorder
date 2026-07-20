@@ -63,9 +63,12 @@ func (r *DockerRunner) Evaluate(ctx context.Context, spec EvaluatorSpec) (Evalua
 		if output, err := r.command(ctx, "network", "create", "--internal", name); err != nil {
 			return EvaluatorResult{}, types.NewError(types.ErrUnsafeReplay, "cannot create evaluator isolation network", "verify OCI network support", fmt.Errorf("%s: %w", output, err))
 		}
-		gatewayArgs := []string{"run", "-d", "--name", name + "-gateway", "--network", name, "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--pids-limit", "64", "--memory", "128m", "--tmpfs", "/tmp:rw,noexec,nosuid,size=16m", "-e", "FLIGHT_GATEWAY_ALLOWED_HOSTS=" + strings.Join(allowed, ","), spec.GatewayImage, "/flight-gateway"}
+		gatewayArgs := []string{"run", "-d", "--name", name + "-gateway", "--network", name, "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--pids-limit", "64", "--memory", "128m", "--tmpfs", "/tmp:rw,noexec,nosuid,size=16m", "-e", "FLIGHT_GATEWAY_ALLOWED_HOSTS=" + strings.Join(allowed, ","), "--entrypoint", "/flight-gateway", spec.GatewayImage}
 		if output, err := r.command(ctx, gatewayArgs...); err != nil {
 			return EvaluatorResult{}, types.NewError(types.ErrUnsafeReplay, "cannot start evaluator gateway", "build the configured Flight gateway image", fmt.Errorf("%s: %w", output, err))
+		}
+		if err := r.waitForGateway(ctx, name+"-gateway"); err != nil {
+			return EvaluatorResult{}, err
 		}
 		if output, err := r.command(ctx, "network", "connect", r.egressNetwork(), name+"-gateway"); err != nil {
 			return EvaluatorResult{}, types.NewError(types.ErrUnsafeReplay, "cannot attach evaluator gateway egress", "verify the OCI default bridge", fmt.Errorf("%s: %w", output, err))

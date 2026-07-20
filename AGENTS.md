@@ -5,6 +5,7 @@ This repository is designed for agent-first development. Start here, then open o
 ## Commands
 
 - `make bootstrap` — install project dependencies.
+- `make harness-check` — prove the complete agent workflow in a fresh, isolated worktree and retain diagnostics.
 - `make generate` — regenerate checked-in API and schema references.
 - `make build` — build Go binaries, SDKs, and inspector.
 - `make test` — run fast unit tests.
@@ -15,6 +16,7 @@ This repository is designed for agent-first development. Start here, then open o
 - `make quality` — generate the domain quality report.
 - `make verify` — run every blocking local check.
 - `make dev-up` / `make dev-down` — start or stop a worktree-isolated development stack.
+- `make observe QUERY=capsules` — query logs, metrics, capsules, traces, or jobs from that stack.
 
 ## Sources of truth
 
@@ -26,6 +28,7 @@ This repository is designed for agent-first development. Start here, then open o
 - Active execution plan: [docs/exec-plans/active/v1.md](docs/exec-plans/active/v1.md)
 - API/schema references: [docs/generated/index.md](docs/generated/index.md)
 - Technical debt: [docs/exec-plans/tech-debt-tracker.md](docs/exec-plans/tech-debt-tracker.md)
+- V1 completion evidence: [docs/V1_EVIDENCE.md](docs/V1_EVIDENCE.md)
 
 ## Architecture rules
 

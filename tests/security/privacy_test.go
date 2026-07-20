@@ -96,9 +96,12 @@ func TestAFRT09OCIContainerCannotEgressWriteHostOrReachDocker(t *testing.T) {
 	}
 	script := `set -eu
 test ! -e /var/run/docker.sock
+test -r "$FLIGHT_REPLAY_PLAN"
+grep -q '"schema_version":"1.0"' "$FLIGHT_REPLAY_PLAN"
 if touch /host-write; then exit 21; fi
 touch "$FLIGHT_WORKSPACE/probe"
 if env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY wget -q -T 2 -O /dev/null http://1.1.1.1; then exit 22; fi
+wget -q -O /dev/null --header 'Content-Type: application/json' --post-data '{"resourceSpans":[]}' "$OTEL_EXPORTER_OTLP_ENDPOINT/v1/traces"
 printf 'isolation-ok\n'`
 	result, err := runner.Run(context.Background(), oci.RunSpec{
 		JobID:          "security-contract",
@@ -116,6 +119,9 @@ printf 'isolation-ok\n'`
 	}
 	if result.ExitCode != 0 || !strings.Contains(string(result.Stdout), "isolation-ok") {
 		t.Fatalf("OCI isolation probe failed: exit=%d stdout=%q stderr=%q", result.ExitCode, result.Stdout, result.Stderr)
+	}
+	if len(result.OTLPBatches) != 1 {
+		t.Fatalf("expected one candidate OTLP batch copied through the OCI API, got %d", len(result.OTLPBatches))
 	}
 }
 

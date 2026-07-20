@@ -1,6 +1,7 @@
 package main
 
 import (
+	"archive/tar"
 	"compress/gzip"
 	"crypto/rand"
 	"encoding/hex"
@@ -22,6 +23,19 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "healthcheck" {
+		if err := checkHealth(); err != nil {
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) == 2 && os.Args[1] == "export-captures" {
+		if err := exportCaptures(config.LoadGatewayEnvironment().OutputPath, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, "cannot export policy-safe candidate telemetry")
+			os.Exit(1)
+		}
+		return
+	}
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 	environment := config.LoadGatewayEnvironment()
 	allowed := parseAllowed(environment.AllowedHosts)
@@ -40,6 +54,58 @@ func main() {
 		logger.Error("gateway stopped", "error_type", fmt.Sprintf("%T", err))
 		os.Exit(1)
 	}
+}
+
+func exportCaptures(root string, destination io.Writer) error {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return err
+	}
+	archive := tar.NewWriter(destination)
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".otlp.pb") || filepath.Base(entry.Name()) != entry.Name() {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() || info.Size() > 64<<20 {
+			return fmt.Errorf("invalid candidate telemetry file")
+		}
+		if err := archive.WriteHeader(&tar.Header{Name: entry.Name(), Mode: 0o600, Size: info.Size()}); err != nil {
+			return err
+		}
+		file, err := os.Open(filepath.Join(root, entry.Name()))
+		if err != nil {
+			return err
+		}
+		_, copyErr := io.Copy(archive, file)
+		closeErr := file.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+	}
+	return archive.Close()
+}
+
+func checkHealth() error {
+	client := &http.Client{
+		Transport: &http.Transport{Proxy: nil},
+		Timeout:   time.Second,
+	}
+	response, err := client.Get("http://127.0.0.1:8080/healthz")
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("gateway health returned %s", response.Status)
+	}
+	return nil
 }
 
 type gateway struct {
