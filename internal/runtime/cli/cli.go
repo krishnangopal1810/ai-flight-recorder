@@ -91,9 +91,16 @@ func newInit() *cobra.Command {
 }
 
 func newRecord(options *rootOptions) *cobra.Command {
-	command := &cobra.Command{Use: "record -- <application command>", Short: "Run an application with Flight capture enabled", Args: cobra.MinimumNArgs(1), DisableFlagParsing: true, RunE: func(_ *cobra.Command, args []string) error {
+	command := &cobra.Command{Use: "record -- <application command>", Short: "Run an application with Flight capture enabled", Args: cobra.MinimumNArgs(1), DisableFlagParsing: true}
+	command.RunE = func(_ *cobra.Command, args []string) error {
+		if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
+			return command.Help()
+		}
 		if len(args) > 0 && args[0] == "--" {
 			args = args[1:]
+		}
+		if len(args) == 0 {
+			return types.NewError(types.ErrValidation, "record command is missing an application", "pass an argv command after flight record --", nil)
 		}
 		if len(args) == 0 {
 			return types.NewError(types.ErrValidation, "application command is required", "use flight record -- <command>", nil)
@@ -109,7 +116,7 @@ func newRecord(options *rootOptions) *cobra.Command {
 			return err
 		}
 		return nil
-	}}
+	}
 	return command
 }
 

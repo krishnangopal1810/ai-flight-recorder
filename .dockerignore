@@ -1,0 +1,15 @@
+.git
+.github
+.artifacts
+.flight
+.worktree
+**/node_modules
+**/.venv
+**/.pytest_cache
+**/__pycache__
+**/dist
+*.db
+*.db-shm
+*.db-wal
+*.pyc
+*.tsbuildinfo

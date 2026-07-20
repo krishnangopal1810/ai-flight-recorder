@@ -1,4 +1,11 @@
 import { test, expect } from "@playwright/test";
+import {writeFile} from "node:fs/promises";
+
+test.afterEach(async ({page}, testInfo) => {
+	const path = testInfo.outputPath("dom.html");
+	await writeFile(path, await page.content());
+	await testInfo.attach("dom.html", {path, contentType: "text/html"});
+});
 
 test("capsule inspector is navigable from deterministic evidence", async ({page}) => {
   await page.route("**/api/v1/capsules", route => route.fulfill({json: {items: [{capsule_id: "afr_1234567890abcdef", trace_id: "trace", project_id: "demo", service_name: "policy-agent", start_time: "2026-07-21T00:00:00Z", terminal_status: "error", completeness: {playback: {state: "ready"}, replay: {state: "blocked", missing: [{code: "entrypoint_missing", message: "a registered replay entrypoint is required"}]}, diff: {state: "ready"}, bisect: {state: "blocked"}}}]}}));

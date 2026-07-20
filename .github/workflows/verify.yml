@@ -62,3 +62,13 @@ jobs:
           FLIGHT_TEST_S3_ACCESS_KEY: flight
           FLIGHT_TEST_S3_SECRET_KEY: flight-test-password
           FLIGHT_REQUIRE_OCI_SECURITY: "1"
+      - name: Upload agent-readable verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .artifacts/harness
+            .artifacts/playwright
+          if-no-files-found: ignore
+          retention-days: 14

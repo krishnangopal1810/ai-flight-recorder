@@ -1,6 +1,6 @@
 # V1 acceptance matrix
 
-`make verify` is the authoritative local gate. The named Go tests below make every PRD acceptance scenario queryable by AFR ID; SDK and browser suites cover their native contracts and inspector presentation.
+`make verify` is the blocking gate. The named tests below make every PRD acceptance ID queryable, but an ID is not considered complete until [the V1 evidence audit](V1_EVIDENCE.md) links it to a full deterministic journey at the scope of the PRD scenario. Lower-layer regressions remain useful evidence but do not substitute for end-to-end proof.
 
 | Test | Executable evidence | Expected invariant |
 |---|---|---|

@@ -1,10 +1,12 @@
 package oci
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -77,33 +79,49 @@ func (r *DockerRunner) Run(ctx context.Context, spec RunSpec) (RunResult, error)
 		return RunResult{}, err
 	}
 	planPath := filepath.Join(root, "replay-plan.json")
-	if err := os.WriteFile(planPath, spec.ReplayEnvelope, 0o400); err != nil {
+	// docker cp preserves this mode while transferring the envelope through the
+	// OCI API. The application consumes it from an isolated read-only volume,
+	// so it must be readable by the declared non-root application user.
+	if err := os.WriteFile(planPath, spec.ReplayEnvelope, 0o444); err != nil {
 		return RunResult{}, types.NewError(types.ErrStorage, "cannot stage replay plan", "check temporary directory permissions", err)
 	}
-	outputDir := filepath.Join(root, "output")
-	if err := os.Mkdir(outputDir, 0o777); err != nil {
-		return RunResult{}, err
-	}
-	if err := os.Chmod(outputDir, 0o777); err != nil {
-		return RunResult{}, err
-	}
-
 	network := "flight-" + safeName(spec.JobID)
 	gateway := network + "-gateway"
 	application := network + "-app"
+	planStager := network + "-plan-stager"
+	planVolume := network + "-plan"
 	cleanup := func() {
-		_, _ = r.command(context.Background(), "rm", "-f", application, gateway)
+		_, _ = r.command(context.Background(), "rm", "-f", application, gateway, planStager)
 		_, _ = r.command(context.Background(), "network", "rm", network)
+		_, _ = r.command(context.Background(), "volume", "rm", "-f", planVolume)
 	}
 	defer cleanup()
 	if output, err := r.command(ctx, "network", "create", "--internal", network); err != nil {
 		return RunResult{}, types.NewError(types.ErrUnsafeReplay, "cannot create isolated replay network", "verify the OCI runtime supports internal networks", fmt.Errorf("%s: %w", output, err))
 	}
+	if output, err := r.command(ctx, "volume", "create", planVolume); err != nil {
+		return RunResult{}, types.NewError(types.ErrUnsafeReplay, "cannot create isolated replay plan volume", "verify the OCI runtime supports named volumes", fmt.Errorf("%s: %w", output, err))
+	}
+	stagerArgs := []string{"create", "--name", planStager, "--mount", "type=volume,src=" + planVolume + ",dst=/run/flight/plan", spec.GatewayImage}
+	if output, err := r.command(ctx, stagerArgs...); err != nil {
+		return RunResult{}, types.NewError(types.ErrUnsafeReplay, "cannot create replay plan staging container", "build the configured Flight gateway image", fmt.Errorf("%s: %w", output, err))
+	}
+	if output, err := r.command(ctx, "cp", planPath, planStager+":/run/flight/plan/replay-plan.json"); err != nil {
+		return RunResult{}, types.NewError(types.ErrStorage, "cannot transfer replay plan to the OCI daemon", "verify the OCI daemon supports docker cp and named volumes", fmt.Errorf("%s: %w", output, err))
+	}
+	if output, err := r.command(ctx, "rm", "-f", planStager); err != nil {
+		return RunResult{}, types.NewError(types.ErrUnsafeReplay, "cannot remove replay plan staging container", "inspect the OCI runtime", fmt.Errorf("%s: %w", output, err))
+	}
 
 	allowed := uniqueHosts(spec.AllowedHosts)
-	gatewayArgs := []string{"run", "-d", "--name", gateway, "--network", network, "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--pids-limit", "64", "--memory", "128m", "--tmpfs", "/tmp:rw,noexec,nosuid,size=16m", "--mount", "type=bind,src=" + outputDir + ",dst=/output", "-e", "FLIGHT_GATEWAY_ALLOWED_HOSTS=" + strings.Join(allowed, ","), "-e", "FLIGHT_GATEWAY_OUTPUT=/output", spec.GatewayImage, "/flight-gateway"}
+	// Gateway evidence remains in a bounded daemon-local tmpfs. docker cp below
+	// transfers it through the OCI API, avoiding daemon-host bind path semantics.
+	gatewayArgs := []string{"run", "-d", "--name", gateway, "--network", network, "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--pids-limit", "64", "--memory", "256m", "--tmpfs", "/tmp:rw,noexec,nosuid,size=128m", "-e", "FLIGHT_GATEWAY_ALLOWED_HOSTS=" + strings.Join(allowed, ","), "-e", "FLIGHT_GATEWAY_OUTPUT=/tmp", "--entrypoint", "/flight-gateway", spec.GatewayImage}
 	if output, err := r.command(ctx, gatewayArgs...); err != nil {
 		return RunResult{}, types.NewError(types.ErrUnsafeReplay, "cannot start replay gateway", "build the configured Flight gateway image", fmt.Errorf("%s: %w", output, err))
+	}
+	if err := r.waitForGateway(ctx, gateway); err != nil {
+		return RunResult{}, err
 	}
 	if len(allowed) > 0 {
 		if output, err := r.command(ctx, "network", "connect", r.egressNetwork(), gateway); err != nil {
@@ -111,7 +129,7 @@ func (r *DockerRunner) Run(ctx context.Context, spec RunSpec) (RunResult, error)
 		}
 	}
 
-	args := []string{"run", "--name", application, "--network", network, "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--pids-limit", "128", "--user", "65532:65532", "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m", "--tmpfs", "/run/flight/workspace:rw,nosuid,size=256m", "--mount", "type=bind,src=" + planPath + ",dst=/run/flight/replay-plan.json,readonly", "-e", "FLIGHT_REPLAY_PLAN=/run/flight/replay-plan.json", "-e", "FLIGHT_WORKSPACE=/run/flight/workspace", "-e", "FLIGHT_CAPTURE=true", "-e", "OTEL_EXPORTER_OTLP_ENDPOINT=http://" + gateway + ":8080", "-e", "HTTP_PROXY=http://" + gateway + ":8080", "-e", "HTTPS_PROXY=http://" + gateway + ":8080", "-e", "NO_PROXY=" + gateway}
+	args := []string{"run", "--name", application, "--network", network, "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--pids-limit", "128", "--user", "65532:65532", "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m", "--tmpfs", "/run/flight/workspace:rw,nosuid,size=256m", "--mount", "type=volume,src=" + planVolume + ",dst=/run/flight/plan,readonly", "-e", "FLIGHT_REPLAY_PLAN=/run/flight/plan/replay-plan.json", "-e", "FLIGHT_WORKSPACE=/run/flight/workspace", "-e", "FLIGHT_CAPTURE=true", "-e", "OTEL_EXPORTER_OTLP_ENDPOINT=http://" + gateway + ":8080", "-e", "HTTP_PROXY=http://" + gateway + ":8080", "-e", "HTTPS_PROXY=http://" + gateway + ":8080", "-e", "NO_PROXY=" + gateway}
 	if spec.WorkingDir != "" {
 		args = append(args, "--workdir", spec.WorkingDir)
 	}
@@ -149,30 +167,42 @@ func (r *DockerRunner) Run(ctx context.Context, spec RunSpec) (RunResult, error)
 		command.Env = append(command.Env, key+"="+spec.Environment[key])
 	}
 	command.Stdin = bytes.NewReader(spec.Input)
-	var stdout, stderr bytes.Buffer
+	var stdout, stderr cappedBuffer
+	stdout.limit, stderr.limit = 4<<20, 64<<10
 	command.Stdout, command.Stderr = &stdout, &stderr
 	start := time.Now()
 	runErr := command.Run()
 	duration := time.Since(start)
 	result := RunResult{Stdout: stdout.Bytes(), Stderr: safeStderr(stderr.Bytes()), Duration: duration}
 	if runErr != nil {
+		if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+			return result, types.NewError(types.ErrBuild, "replay timed out", "increase the declared timeout only after inspecting the candidate logs", runErr)
+		}
 		var exit *exec.ExitError
 		if errors.As(runErr, &exit) {
 			result.ExitCode = exit.ExitCode()
-		} else if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
-			return result, types.NewError(types.ErrBuild, "replay timed out", "increase the declared timeout only after inspecting the candidate logs", runErr)
 		} else {
 			return result, types.NewError(types.ErrBuild, "cannot execute replay container", "inspect the OCI runtime and image", runErr)
 		}
 	}
-	files, _ := filepath.Glob(filepath.Join(outputDir, "*.otlp.pb"))
-	for _, filename := range files {
-		data, err := os.ReadFile(filename)
-		if err != nil {
-			return result, types.NewError(types.ErrStorage, "cannot read replay OTLP output", "inspect gateway filesystem permissions", err)
+	exportCtx, cancelExport := context.WithTimeout(ctx, 30*time.Second)
+	defer cancelExport()
+	archive, diagnostic, err := r.commandOutput(exportCtx, 130<<20, "exec", gateway, "/flight-gateway", "export-captures")
+	if err != nil {
+		return result, types.NewError(types.ErrStorage, "cannot transfer replay OTLP output from the OCI daemon", "inspect gateway availability and OCI exec support", fmt.Errorf("%s: %w", diagnostic, err))
+	}
+	reader := tar.NewReader(bytes.NewReader(archive))
+	for {
+		header, err := reader.Next()
+		if errors.Is(err, io.EOF) {
+			break
 		}
-		if len(data) > 64<<20 {
-			return result, types.NewError(types.ErrValidation, "replay OTLP output exceeds the batch limit", "reduce candidate exporter batch size", nil)
+		if err != nil || header == nil || header.Size < 0 || header.Size > 64<<20 || filepath.Base(header.Name) != header.Name || !strings.HasSuffix(header.Name, ".otlp.pb") {
+			return result, types.NewError(types.ErrValidation, "gateway returned invalid replay OTLP output", "inspect the trusted gateway image and candidate batch size", err)
+		}
+		data := make([]byte, header.Size)
+		if _, err := io.ReadFull(reader, data); err != nil {
+			return result, types.NewError(types.ErrStorage, "cannot read replay OTLP output", "inspect the trusted gateway image", err)
 		}
 		result.OTLPBatches = append(result.OTLPBatches, data)
 	}
@@ -184,6 +214,24 @@ func (r *DockerRunner) egressNetwork() string {
 		return "podman"
 	}
 	return "bridge"
+}
+
+func (r *DockerRunner) waitForGateway(ctx context.Context, gateway string) error {
+	waitCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	lastOutput := ""
+	for {
+		output, err := r.command(waitCtx, "exec", gateway, "/flight-gateway", "healthcheck")
+		if err == nil {
+			return nil
+		}
+		lastOutput = output
+		select {
+		case <-waitCtx.Done():
+			return types.NewError(types.ErrUnsafeReplay, "Flight gateway did not become ready", "inspect the configured gateway image and container logs", fmt.Errorf("%s: %w", lastOutput, waitCtx.Err()))
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
 }
 
 func validateSpec(spec RunSpec) error {
@@ -200,6 +248,41 @@ func (r *DockerRunner) command(ctx context.Context, args ...string) (string, err
 	command := exec.CommandContext(ctx, r.Binary, args...)
 	output, err := command.CombinedOutput()
 	return strings.TrimSpace(string(output)), err
+}
+
+func (r *DockerRunner) commandOutput(ctx context.Context, limit int64, args ...string) ([]byte, string, error) {
+	command := exec.CommandContext(ctx, r.Binary, args...)
+	stdout := limitedOutput{limit: limit}
+	var stderr cappedBuffer
+	stderr.limit = 64 << 10
+	command.Stdout, command.Stderr = &stdout, &stderr
+	err := command.Run()
+	if stdout.exceeded {
+		err = errOutputLimit
+	}
+	return stdout.Bytes(), string(safeStderr(stderr.Bytes())), err
+}
+
+var errOutputLimit = errors.New("OCI command output limit exceeded")
+
+type limitedOutput struct {
+	bytes.Buffer
+	limit    int64
+	exceeded bool
+}
+
+func (b *limitedOutput) Write(value []byte) (int, error) {
+	remaining := b.limit - int64(b.Len())
+	if remaining <= 0 {
+		b.exceeded = true
+		return 0, errOutputLimit
+	}
+	if int64(len(value)) > remaining {
+		written, _ := b.Buffer.Write(value[:remaining])
+		b.exceeded = true
+		return written, errOutputLimit
+	}
+	return b.Buffer.Write(value)
 }
 
 var safePattern = regexp.MustCompile(`[^a-zA-Z0-9_.-]+`)
