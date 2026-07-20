@@ -151,6 +151,8 @@ failure_classification="product_defect"
   }
 
 run_step reference-replay ./scripts/reference-replay-smoke.sh "$artifact_root/reference-replay"
+run_step typescript-reference ./scripts/typescript-reference-smoke.sh \
+  "$artifact_root/typescript-reference" "$artifact_root/reference-replay/source-capsule.json"
 
 step="teardown-stack"
 failure_classification="harness_capability_gap"
