@@ -46,13 +46,16 @@ type Runner interface {
 	Run(context.Context, RunSpec) (RunResult, error)
 }
 
-type DockerRunner struct{ Binary string }
+type DockerRunner struct {
+	Binary        string
+	EgressNetwork string
+}
 
-func NewDockerRunner(binary string) *DockerRunner {
+func NewDockerRunner(binary, egressNetwork string) *DockerRunner {
 	if binary == "" {
 		binary = "docker"
 	}
-	return &DockerRunner{Binary: binary}
+	return &DockerRunner{Binary: binary, EgressNetwork: egressNetwork}
 }
 
 func (r *DockerRunner) Available(ctx context.Context) error {
@@ -210,6 +213,9 @@ func (r *DockerRunner) Run(ctx context.Context, spec RunSpec) (RunResult, error)
 }
 
 func (r *DockerRunner) egressNetwork() string {
+	if r.EgressNetwork != "" {
+		return r.EgressNetwork
+	}
 	if strings.Contains(filepath.Base(r.Binary), "podman") {
 		return "podman"
 	}

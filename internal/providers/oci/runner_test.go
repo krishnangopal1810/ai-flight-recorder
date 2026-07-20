@@ -37,6 +37,9 @@ func TestDockerRunnerTransfersReplayFilesThroughOCIAPI(t *testing.T) {
 	if strings.Contains(logText, "type=bind") {
 		t.Fatalf("runner used a daemon-host bind mount:\n%s", logText)
 	}
+	if strings.Contains(logText, "network connect") {
+		t.Fatalf("gateway joined an egress network without allowed hosts:\n%s", logText)
+	}
 	for _, required := range []string{
 		"run -i --name flight-remote-daemon-contract-app",
 		"volume create flight-remote-daemon-contract-plan",
@@ -92,6 +95,7 @@ func TestDockerRunnerStartsEvaluatorGatewayWithExplicitEntrypoint(t *testing.T) 
 		"run -i --name flight-evaluator-gateway-contract",
 		"--entrypoint /flight-gateway gateway:test",
 		"exec flight-evaluator-gateway-contract-gateway /flight-gateway healthcheck",
+		"network connect customer-egress flight-evaluator-gateway-contract-gateway",
 		"--entrypoint /evaluator evaluator:test",
 	} {
 		if !strings.Contains(string(logData), required) {
@@ -134,5 +138,5 @@ exit 0
 		t.Fatal(err)
 	}
 	t.Setenv("FLIGHT_FAKE_OCI_LOG", logPath)
-	return NewDockerRunner(binary), logPath
+	return NewDockerRunner(binary, "customer-egress"), logPath
 }

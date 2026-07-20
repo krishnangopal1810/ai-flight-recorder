@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -71,8 +72,11 @@ type Config struct {
 type RuntimeConfig struct {
 	OCIBinary         string            `yaml:"oci_binary"`
 	GatewayImage      string            `yaml:"gateway_image"`
+	OCIEgressNetwork  string            `yaml:"oci_egress_network"`
 	ReplayCredentials map[string]string `yaml:"-"`
 }
+
+var ociNetworkName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$`)
 
 type FlightFile struct {
 	Version    string           `yaml:"version"`
@@ -158,6 +162,9 @@ func (c Config) Validate() error {
 	if c.Runtime.OCIBinary != "docker" && c.Runtime.OCIBinary != "podman" {
 		return types.NewError(types.ErrValidation, "unsupported OCI runtime", "use docker or podman", nil)
 	}
+	if c.Runtime.OCIEgressNetwork != "" && !ociNetworkName.MatchString(c.Runtime.OCIEgressNetwork) {
+		return types.NewError(types.ErrValidation, "invalid OCI egress network", "use an existing Docker or Podman network name containing only letters, digits, dot, underscore, or hyphen", nil)
+	}
 	if c.Storage.Driver == "postgres" && (c.Storage.PostgresURL == "" || c.Storage.S3Endpoint == "" || c.Storage.S3Bucket == "") {
 		return types.NewError(types.ErrValidation, "hosted storage configuration is incomplete", "set PostgreSQL URL, S3 endpoint, and S3 bucket", nil)
 	}
@@ -240,6 +247,9 @@ func applyEnvironment(c *Config) {
 	}
 	if value := os.Getenv("FLIGHT_GATEWAY_IMAGE"); value != "" {
 		c.Runtime.GatewayImage = value
+	}
+	if value := os.Getenv("FLIGHT_OCI_EGRESS_NETWORK"); value != "" {
+		c.Runtime.OCIEgressNetwork = value
 	}
 	if c.Runtime.ReplayCredentials == nil {
 		c.Runtime.ReplayCredentials = map[string]string{}
