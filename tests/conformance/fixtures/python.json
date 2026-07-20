@@ -1,0 +1,6 @@
+{
+  "producer": "python",
+  "schema_url": "https://opentelemetry.io/schemas/1.30.0",
+  "kind_attribute": "openinference.span.kind",
+  "kind_value": "AGENT"
+}

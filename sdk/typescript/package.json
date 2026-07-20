@@ -1,0 +1,26 @@
+{
+  "name": "@ai-flight-recorder/sdk",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run src/index.test.ts"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "^1.9.0",
+    "canonicalize": "^3.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}

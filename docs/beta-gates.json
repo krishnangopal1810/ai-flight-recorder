@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.0",
+  "measured_at": null,
+  "reviewer": null,
+  "metrics": {
+    "supported_incident_reproduction_rate": {"value": null, "status": "pending", "evidence": []},
+    "diagnosis_time_improvement": {"value": null, "status": "pending", "evidence": []},
+    "first_divergence_precision": {"value": null, "status": "pending", "evidence": []},
+    "initial_integration_minutes": {"value": null, "status": "pending", "evidence": []},
+    "unintended_replay_side_effects": {"value": null, "status": "pending", "evidence": []},
+    "p95_recording_overhead": {"value": null, "status": "pending", "evidence": []}
+  }
+}

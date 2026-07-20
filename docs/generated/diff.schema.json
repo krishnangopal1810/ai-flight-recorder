@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-flight-recorder.dev/schemas/diff-1.0.json",
+  "title": "Execution Diff",
+  "type": "object",
+  "required": ["baseline_capsule_id", "candidate_capsule_id", "alignments", "observations", "alignment_confidence", "first_divergence_known"],
+  "properties": {
+    "baseline_capsule_id": {"type": "string"},
+    "candidate_capsule_id": {"type": "string"},
+    "alignments": {"type": "array", "items": {"$ref": "#/$defs/alignment"}},
+    "observations": {"type": "array", "items": {"$ref": "#/$defs/observation"}},
+    "first_divergence": {"$ref": "#/$defs/observation"},
+    "first_divergence_known": {"type": "boolean"},
+    "hypotheses": {"type": "array", "items": {"$ref": "#/$defs/hypothesis"}},
+    "alignment_confidence": {"type": "number", "minimum": 0, "maximum": 1}
+  },
+  "$defs": {
+    "evidence": {
+      "type": "object",
+      "required": ["capsule_id"],
+      "properties": {
+        "capsule_id": {"type": "string"},
+        "span_id": {"type": "string"},
+        "field": {"type": "string"},
+        "payload_digest": {"type": "string"}
+      },
+      "additionalProperties": true
+    },
+    "observation": {
+      "type": "object",
+      "required": ["kind", "path", "rule", "confidence", "evidence"],
+      "properties": {
+        "kind": {"type": "string"},
+        "path": {"type": "string"},
+        "before": true,
+        "after": true,
+        "rule": {"type": "string"},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "evidence": {"type": "array", "items": {"$ref": "#/$defs/evidence"}}
+      },
+      "additionalProperties": true
+    },
+    "alignment": {
+      "type": "object",
+      "required": ["kind", "confidence"],
+      "properties": {
+        "baseline_span": {"type": "string"},
+        "candidate_span": {"type": "string"},
+        "kind": {"enum": ["matched", "moved", "inserted", "deleted", "ambiguous"]},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "alternatives": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": true
+    },
+    "hypothesis": {
+      "type": "object",
+      "required": ["summary", "supporting", "validated"],
+      "properties": {
+        "summary": {"type": "string"},
+        "supporting": {"type": "array", "items": {"$ref": "#/$defs/evidence"}},
+        "contradicting": {"type": "array", "items": {"$ref": "#/$defs/evidence"}},
+        "validated": {"type": "boolean"}
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

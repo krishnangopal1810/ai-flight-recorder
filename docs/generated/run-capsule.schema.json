@@ -1,0 +1,142 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-flight-recorder.dev/schemas/run-capsule-1.0.json",
+  "title": "AI Flight Recorder Run Capsule",
+  "type": "object",
+  "required": ["schema_version", "capsule_id", "trace_id", "project_id", "service_name", "start_time", "end_time", "terminal_status", "integrity", "completeness", "provenance", "operations", "privacy"],
+  "properties": {
+    "schema_version": {"type": "string", "pattern": "^1\\.[0-9]+$"},
+    "capsule_id": {"type": "string", "pattern": "^afr_[a-f0-9]{64}$"},
+    "source_capsule_id": {"type": "string"},
+    "trace_id": {"type": "string"},
+    "project_id": {"type": "string"},
+    "service_name": {"type": "string"},
+    "start_time": {"type": "string", "format": "date-time"},
+    "end_time": {"type": "string", "format": "date-time"},
+    "expires_at": {"type": "string", "format": "date-time"},
+    "terminal_status": {"type": "string"},
+    "integrity": {"$ref": "#/$defs/integrity"},
+    "completeness": {"type": "object", "additionalProperties": {"$ref": "completeness-report.schema.json"}},
+    "provenance": {"$ref": "#/$defs/provenance"},
+    "model_configuration": {"type": "object", "additionalProperties": true},
+    "artifacts": {"type": "array", "items": {"$ref": "#/$defs/artifact"}},
+    "operations": {"type": "array", "items": {"$ref": "#/$defs/operation"}},
+    "boundaries": {"type": "array", "items": {"$ref": "boundary.schema.json"}},
+    "privacy": {"$ref": "#/$defs/privacy"},
+    "evaluations": {"type": "array", "items": {"type": "object", "additionalProperties": true}},
+    "replay_history": {"type": "array", "items": {"type": "object", "additionalProperties": true}},
+    "extensions": {"type": "object", "additionalProperties": true}
+  },
+  "$defs": {
+    "digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+    "payload": {
+      "type": "object",
+      "required": ["digest", "size"],
+      "properties": {
+        "digest": {"$ref": "#/$defs/digest"},
+        "media_type": {"type": "string"},
+        "size": {"type": "integer", "minimum": 0},
+        "state": {"type": "string"},
+        "reason": {"type": "string"}
+      },
+      "additionalProperties": true
+    },
+    "integrity": {
+      "type": "object",
+      "required": ["algorithm", "manifest_digest", "payload_digests", "root_digest"],
+      "properties": {
+        "algorithm": {"const": "sha256+rfc8785"},
+        "manifest_digest": {"$ref": "#/$defs/digest"},
+        "payload_digests": {"type": "array", "items": {"$ref": "#/$defs/digest"}},
+        "root_digest": {"$ref": "#/$defs/digest"}
+      },
+      "additionalProperties": true
+    },
+    "entrypoint": {
+      "type": "object",
+      "required": ["command", "input_mode", "output_mode", "timeout"],
+      "properties": {
+        "command": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "working_dir": {"type": "string"},
+        "image": {"type": "string"},
+        "dockerfile": {"type": "string"},
+        "context": {"type": "string"},
+        "input_mode": {"const": "stdin_json"},
+        "output_mode": {"const": "stdout_json"},
+        "timeout": {"type": "integer"},
+        "environment": {"type": "array", "items": {"type": "string"}},
+        "model_hosts": {"type": "array", "items": {"type": "string"}},
+        "sandboxes": {"type": "object", "additionalProperties": {"type": "string"}},
+        "cpu_limit": {"type": "number", "minimum": 0},
+        "memory_limit_mb": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": true
+    },
+    "provenance": {
+      "type": "object",
+      "properties": {
+        "repository_url": {"type": "string"},
+        "project_id": {"type": "string"},
+        "commit_sha": {"type": "string"},
+        "dirty_digest": {"$ref": "#/$defs/digest"},
+        "build_id": {"type": "string"},
+        "container_id": {"type": "string"},
+        "runtime": {"type": "string"},
+        "dependency_lock": {"type": "object", "additionalProperties": {"type": "string"}},
+        "feature_flags": {"type": "object", "additionalProperties": true},
+        "environment_facts": {"type": "object", "additionalProperties": {"type": "string"}},
+        "entrypoint": {"$ref": "#/$defs/entrypoint"},
+        "missing": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": true
+    },
+    "artifact": {
+      "type": "object",
+      "required": ["id", "type", "logical_name", "state"],
+      "properties": {
+        "id": {"type": "string"},
+        "type": {"type": "string"},
+        "logical_name": {"type": "string"},
+        "version": {"type": "string"},
+        "media_type": {"type": "string"},
+        "state": {"type": "string"},
+        "payload": {"$ref": "#/$defs/payload"}
+      },
+      "additionalProperties": true
+    },
+    "operation": {
+      "type": "object",
+      "required": ["span_id", "kind", "name", "start_time", "end_time", "status", "sequence"],
+      "properties": {
+        "span_id": {"type": "string"},
+        "parent_span_id": {"type": "string"},
+        "logical_key": {"type": "string"},
+        "kind": {"type": "string"},
+        "name": {"type": "string"},
+        "start_time": {"type": "string", "format": "date-time"},
+        "end_time": {"type": "string", "format": "date-time"},
+        "input": {"$ref": "#/$defs/payload"},
+        "output": {"$ref": "#/$defs/payload"},
+        "status": {"type": "string"},
+        "semantic_convention_version": {"type": "string"},
+        "attributes": {"type": "object", "additionalProperties": {"type": "string"}},
+        "sequence": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": true
+    },
+    "privacy": {
+      "type": "object",
+      "required": ["mode"],
+      "properties": {
+        "policy_version": {"type": "string"},
+        "policy_digest": {"$ref": "#/$defs/digest"},
+        "mode": {"enum": ["strict", "permissive"]},
+        "redactions": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
+        "exclusions": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
+        "export_policy": {"type": "string"}
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

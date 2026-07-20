@@ -1,0 +1,209 @@
+openapi: 3.1.0
+info:
+  title: AI Flight Recorder API
+  version: 1.0.0
+servers:
+  - url: http://127.0.0.1:7777/api/v1
+paths:
+  /capsules:
+    get:
+      operationId: listCapsules
+      parameters:
+        - {name: project, in: query, schema: {type: string}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 500}}
+      responses:
+        '200': {description: Capsule summaries, content: {application/json: {schema: {type: object, properties: {items: {type: array, items: {$ref: '#/components/schemas/CapsuleSummary'}}}}}}}
+  /capsules/{id}:
+    get:
+      operationId: getCapsule
+      parameters: [{$ref: '#/components/parameters/CapsuleID'}]
+      responses:
+        '200': {description: Verified capsule, content: {application/json: {schema: {$ref: '#/components/schemas/RunCapsule'}}}}
+  /capsules/{id}/playback:
+    get:
+      operationId: playbackCapsule
+      parameters: [{$ref: '#/components/parameters/CapsuleID'}]
+      responses:
+        '200': {description: Recorded execution without application execution}
+  /capsules/{id}/payloads/{digest}:
+    get:
+      operationId: getCapsulePayload
+      parameters:
+        - {$ref: '#/components/parameters/CapsuleID'}
+        - {name: digest, in: path, required: true, schema: {type: string}}
+      responses:
+        '200': {description: Verified post-policy payload bytes, content: {application/octet-stream: {schema: {type: string, contentEncoding: binary}}}}
+  /capsules/{id}/export:
+    get:
+      operationId: exportCapsule
+      parameters: [{$ref: '#/components/parameters/CapsuleID'}]
+      responses:
+        '200': {description: Deterministic tar+zstd bundle, content: {application/zstd: {schema: {type: string, contentEncoding: binary}}}}
+  /capsules/import:
+    post:
+      operationId: importCapsule
+      requestBody: {required: true, content: {application/zstd: {schema: {type: string, contentEncoding: binary}}}}
+      responses:
+        '201': {description: Verified imported capsule}
+  /diffs:
+    post:
+      operationId: diffCapsules
+      requestBody: {required: true, content: {application/json: {schema: {type: object, required: [baseline_capsule_id, candidate_capsule_id], properties: {baseline_capsule_id: {type: string}, candidate_capsule_id: {type: string}}}}}}
+      responses:
+        '200': {description: Logical execution diff, content: {application/json: {schema: {$ref: '#/components/schemas/Diff'}}}}
+  /replays:
+    post:
+      operationId: createReplay
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/CreateReplayRequest'}}}}
+      responses:
+        '202': {description: Durable replay job, content: {application/json: {schema: {$ref: '#/components/schemas/Job'}}}}
+  /bisects:
+    post:
+      operationId: evaluateBisect
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/BisectRequest'}}}}
+      responses:
+        '200': {description: Validated first-bad, conditional, non-monotonic, or inconclusive result, content: {application/json: {schema: {$ref: '#/components/schemas/BisectResult'}}}}
+  /jobs/{id}:
+    get:
+      operationId: getJob
+      parameters: [{$ref: '#/components/parameters/JobID'}]
+      responses:
+        '200': {description: Job state, content: {application/json: {schema: {$ref: '#/components/schemas/Job'}}}}
+  /jobs/{id}/events:
+    get:
+      operationId: streamJobEvents
+      parameters: [{$ref: '#/components/parameters/JobID'}]
+      responses:
+        '200': {description: Resumable SSE job progress, content: {text/event-stream: {schema: {type: string}}}}
+  /evaluators/validate:
+    post:
+      operationId: validateEvaluator
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/Evaluator'}}}}
+      responses:
+        '200': {description: Valid evaluator definition}
+  /evaluators/run:
+    post:
+      operationId: runEvaluator
+      requestBody: {required: true, content: {application/json: {schema: {type: object, required: [definition, baseline_capsule_id, candidate_capsule_id]}}}}
+      responses:
+        '201': {description: Persisted isolated evaluator result}
+  /evaluators/{id}:
+    get:
+      operationId: getEvaluator
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+        - {name: version, in: query, schema: {type: string}}
+      responses:
+        '200': {description: Versioned evaluator definition, content: {application/json: {schema: {$ref: '#/components/schemas/Evaluator'}}}}
+  /capsules/{id}/evaluations:
+    get:
+      operationId: listEvaluatorRuns
+      parameters: [{$ref: '#/components/parameters/CapsuleID'}]
+      responses:
+        '200': {description: Evaluator evidence attached to the source capsule}
+  /tokens:
+    post:
+      operationId: createToken
+      requestBody: {required: true, content: {application/json: {schema: {type: object, required: [name, scopes]}}}}
+      responses:
+        '201': {description: Token value shown once}
+  /tokens/{id}:
+    delete:
+      operationId: revokeToken
+      parameters: [{$ref: '#/components/parameters/TokenID'}]
+      responses:
+        '204': {description: Token revoked}
+  /audit-events:
+    get:
+      operationId: listAuditEvents
+      parameters:
+        - {name: after, in: query, schema: {type: integer, minimum: 0}}
+      responses:
+        '200': {description: Payload-free administrative evidence}
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: FlightToken
+  parameters:
+    CapsuleID: {name: id, in: path, required: true, schema: {type: string}}
+    JobID: {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+    TokenID: {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+  schemas:
+    RunCapsule: {$ref: '../schemas/run-capsule.schema.json'}
+    ReplayPlan: {$ref: '../schemas/replay-plan.schema.json'}
+    Evaluator: {$ref: '../schemas/evaluator.schema.json'}
+    Diff: {$ref: '../schemas/diff.schema.json'}
+    Error: {$ref: '../schemas/error.schema.json'}
+    CreateReplayRequest:
+      type: object
+      required: [source_capsule_id, substitute_llm, allow_sandboxed_side_effects]
+      properties:
+        source_capsule_id: {type: string}
+        model: {type: string}
+        revision: {type: string}
+        candidate_image: {type: string}
+        candidate_commit: {type: string}
+        candidate_dirty_digest: {type: string}
+        candidate_source_digest: {type: string}
+        substitute_llm: {type: boolean}
+        allow_sandboxed_side_effects: {type: boolean}
+        repetitions: {type: integer, minimum: 1, maximum: 50}
+        pass_threshold: {type: number, minimum: 0, maximum: 1}
+        environment: {type: array, items: {type: string}}
+        gateway_image: {type: string}
+    Job:
+      type: object
+      required: [id, kind, state, request, created_at, updated_at]
+      properties:
+        id: {type: string, format: uuid}
+        kind: {type: string}
+        state: {enum: [queued, running, completed, failed, blocked, inconclusive]}
+        request: {type: object, additionalProperties: true}
+        result: {type: object, additionalProperties: true}
+        error: {$ref: '#/components/schemas/Error'}
+        lease_owner: {type: string}
+        lease_expires_at: {type: string, format: date-time}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    CapsuleSummary:
+      type: object
+      required: [capsule_id, trace_id, project_id, service_name, start_time, terminal_status, completeness]
+      properties:
+        capsule_id: {type: string}
+        trace_id: {type: string}
+        project_id: {type: string}
+        service_name: {type: string}
+        start_time: {type: string, format: date-time}
+        terminal_status: {type: string}
+        completeness: {type: object, additionalProperties: {$ref: '../schemas/completeness-report.schema.json'}}
+    RevisionEvaluation:
+      type: object
+      required: [revision, outcome, passes, trials, confidence]
+      properties:
+        revision: {type: string}
+        outcome: {enum: [good, bad, inconclusive]}
+        passes: {type: integer, minimum: 0}
+        trials: {type: integer, minimum: 0}
+        confidence: {type: number, minimum: 0, maximum: 1}
+        evidence: {type: array, items: {type: string}}
+    BisectRequest:
+      type: object
+      required: [revisions, evaluations, assume_monotonic]
+      properties:
+        revisions: {type: array, minItems: 2, items: {type: string}}
+        evaluations: {type: array, minItems: 2, items: {$ref: '#/components/schemas/RevisionEvaluation'}}
+        assume_monotonic: {type: boolean}
+    BisectResult:
+      type: object
+      required: [outcome, evaluations, non_monotonic]
+      properties:
+        outcome: {enum: [first_bad, conditional_on_monotonicity, non_monotonic, inconclusive]}
+        first_bad: {type: string}
+        evaluations: {type: array, items: {$ref: '#/components/schemas/RevisionEvaluation'}}
+        non_monotonic: {type: boolean}
+        conditional_on: {type: string}
+        message: {type: string}
+security:
+  - bearerAuth: []
