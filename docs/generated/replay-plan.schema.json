@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-flight-recorder.dev/schemas/replay-plan-1.0.json",
+  "title": "AI Flight Recorder Replay Plan",
+  "type": "object",
+  "required": ["schema_version", "source_capsule_id", "entrypoint", "substitute_llm", "allow_sandboxed_side_effects", "repetitions", "pass_threshold", "plan_digest"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "source_capsule_id": {"type": "string"},
+	"model": {"type": "string"},
+    "revision": {"type": "string"},
+	"candidate_dirty_digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+	"candidate_source_digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+    "entrypoint": {"type": "object"},
+    "original_input": {"type": "object"},
+    "substitute_llm": {"type": "boolean"},
+    "allow_sandboxed_side_effects": {"type": "boolean"},
+    "matching_rules": {"type": "object"},
+    "evaluator_id": {"type": "string"},
+    "repetitions": {"type": "integer", "minimum": 1},
+    "pass_threshold": {"type": "number", "minimum": 0, "maximum": 1},
+    "expected_artifacts": {"type": "array", "items": {"type": "string"}},
+	"environment": {"type": "array", "items": {"type": "string"}},
+    "plan_digest": {"type": "string"}
+  },
+  "additionalProperties": true
+}

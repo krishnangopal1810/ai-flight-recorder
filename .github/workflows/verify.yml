@@ -1,0 +1,64 @@
+name: verify
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: flight
+          POSTGRES_USER: flight
+          POSTGRES_PASSWORD: flight-test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U flight -d flight"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            sdk/typescript/package-lock.json
+      - uses: astral-sh/setup-uv@v6
+      - run: make bootstrap
+      - run: cd web && npx playwright install --with-deps chromium
+      - name: Build trusted replay gateway image
+        run: docker build --tag ai-flight-recorder:local --file deploy/Dockerfile .
+      - name: Start S3-compatible contract store
+        run: |
+          docker run -d --name flight-minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=flight \
+            -e MINIO_ROOT_PASSWORD=flight-test-password \
+            quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z server /data
+          for attempt in $(seq 1 30); do
+            curl --fail --silent http://127.0.0.1:9000/minio/health/live && exit 0
+            sleep 1
+          done
+          docker logs flight-minio
+          exit 1
+      - name: Verify
+        run: make verify
+        env:
+          FLIGHT_TEST_POSTGRES_URL: postgres://flight:flight-test@127.0.0.1:5432/flight?sslmode=disable
+          FLIGHT_TEST_S3_ENDPOINT: http://127.0.0.1:9000
+          FLIGHT_TEST_S3_ACCESS_KEY: flight
+          FLIGHT_TEST_S3_SECRET_KEY: flight-test-password
+          FLIGHT_REQUIRE_OCI_SECURITY: "1"

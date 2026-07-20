@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-flight-recorder.dev/schemas/error-1.0.json",
+  "title": "Stable Flight Error",
+  "type": "object",
+  "required": ["code", "message"],
+  "properties": {
+    "code": {"enum": ["validation", "incomplete_capsule", "unmatched_boundary", "unsafe_replay", "authentication", "storage", "build", "evaluator", "inconclusive", "not_found", "conflict"]},
+    "message": {"type": "string"}, "remediation": {"type": "string"}, "details": {"type": "object"}
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,28 @@
+[project]
+name = "ai-flight-recorder"
+version = "0.1.0"
+description = "OpenTelemetry metadata and replay boundaries for AI Flight Recorder"
+requires-python = ">=3.10"
+dependencies = [
+    "opentelemetry-api>=1.28",
+ "PyYAML>=6.0",
+ "rfc8785>=0.1.4",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.24", "mypy>=1.13", "ruff>=0.8"]
+
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/flight_recorder"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

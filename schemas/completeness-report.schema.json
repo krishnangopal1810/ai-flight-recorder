@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-flight-recorder.dev/schemas/completeness-report-1.0.json",
+  "title": "Completeness Report",
+  "type": "object",
+  "required": ["state"],
+  "properties": {
+    "state": {"enum": ["ready", "incomplete", "blocked", "not_applicable"]},
+    "missing": {"type": "array", "items": {"type": "object", "required": ["code", "message"], "properties": {"code": {"type": "string"}, "boundary_id": {"type": "string"}, "message": {"type": "string"}}, "additionalProperties": true}},
+    "ambiguities": {"type": "array", "items": {"type": "string"}}
+  },
+  "additionalProperties": true
+}
