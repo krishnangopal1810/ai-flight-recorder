@@ -3,6 +3,9 @@ package otlp
 import (
 	"context"
 	"path/filepath"
+	"reflect"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -182,6 +185,37 @@ func TestFailedFinalizationIsReportedAsRejectedForRetry(t *testing.T) {
 	}
 	if response.PartialSuccess == nil || response.PartialSuccess.RejectedSpans != 1 || response.PartialSuccess.ErrorMessage == "" {
 		t.Fatalf("non-durable batch was acknowledged: %#v", response.PartialSuccess)
+	}
+}
+
+func TestAFRCAP002ProvenanceParsesRecordedFactsWithoutFabrication(t *testing.T) {
+	span := keyValues([]*commonv1.KeyValue{
+		stringKV("flight.project.id", "support"), stringKV("flight.repository.url", "https://example.invalid/agent.git"), stringKV("flight.git.commit", strings.Repeat("a", 40)), stringKV("flight.git.dirty_digest", "sha256:"+strings.Repeat("d", 64)),
+		stringKV("flight.build.id", "build-1"), stringKV("flight.runtime", "python:3.13"), stringKV("flight.dependency_lock", `{"uv.lock":"sha256:aaa"}`), stringKV("flight.feature_flags", `{"retrieval":"v2"}`), stringKV("flight.environment.REGION.digest", "sha256:region"),
+		stringKV("flight.entrypoint.command", `["python","agent.py"]`), stringKV("flight.entrypoint.image", "sha256:"+strings.Repeat("i", 64)), stringKV("flight.entrypoint.model_hosts", `["model.test.invalid"]`),
+	})
+	resource := keyValues([]*commonv1.KeyValue{stringKV("container.id", "container-1")})
+	actual := provenance(span, resource)
+	if len(actual.Missing) != 0 || actual.Runtime != "python:3.13" || actual.ContainerID != "container-1" || actual.DependencyLock["uv.lock"] != "sha256:aaa" || actual.FeatureFlags["retrieval"] != "v2" || actual.EnvironmentFacts["REGION"] != "sha256:region" || actual.Entrypoint == nil || !reflect.DeepEqual(actual.Entrypoint.Command, []string{"python", "agent.py"}) {
+		t.Fatalf("complete provenance = %#v", actual)
+	}
+}
+
+func TestAFRCAP002ProvenanceNamesMissingFactsAndNeverInventsRuntimeOrEntrypoint(t *testing.T) {
+	actual := provenance(map[string]*commonv1.AnyValue{"flight.entrypoint.command": stringKV("command", "python agent.py").Value}, map[string]*commonv1.AnyValue{"process.runtime.version": stringKV("version", "3.13").Value})
+	wantMissing := []string{"entrypoint_command_invalid", "source_identity", "commit_sha", "build_or_container_identity", "runtime", "dependency_lock", "feature_flags", "entrypoint"}
+	if actual.Runtime != "" || actual.Entrypoint != nil || !reflect.DeepEqual(actual.Missing, wantMissing) {
+		t.Fatalf("missing provenance = %#v, want missing=%v", actual, wantMissing)
+	}
+}
+
+func TestAFRCAP002ProvenanceNamesInvalidStructuredFacts(t *testing.T) {
+	actual := provenance(map[string]*commonv1.AnyValue{
+		"flight.dependency_lock": stringKV("dependency", "null").Value,
+		"flight.feature_flags":   stringKV("flags", "[]").Value,
+	}, nil)
+	if !slices.Contains(actual.Missing, "dependency_lock_invalid") || !slices.Contains(actual.Missing, "feature_flags_invalid") || actual.DependencyLock != nil || actual.FeatureFlags != nil {
+		t.Fatalf("invalid structured provenance = %#v", actual)
 	}
 }
 

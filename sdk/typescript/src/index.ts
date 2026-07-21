@@ -41,6 +41,8 @@ export function setRunProvenance(values: {
   commitSha?: string;
   dirtyDigest?: string;
   buildId?: string;
+  runtime?: string;
+  dependencyLock?: Record<string, string>;
   featureFlags?: Record<string, unknown>;
 }): void {
   safeMetadata("set_run_provenance", () => {
@@ -51,6 +53,8 @@ export function setRunProvenance(values: {
     if (values.commitSha) span?.setAttribute("flight.git.commit", values.commitSha);
     if (values.dirtyDigest) span?.setAttribute("flight.git.dirty_digest", values.dirtyDigest);
     if (values.buildId) span?.setAttribute("flight.build.id", values.buildId);
+    if (values.runtime) span?.setAttribute("flight.runtime", values.runtime);
+    if (values.dependencyLock) span?.setAttribute("flight.dependency_lock", canonical(values.dependencyLock));
     if (values.featureFlags) span?.setAttribute("flight.feature_flags", canonical(values.featureFlags));
   });
 }

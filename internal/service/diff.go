@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"fmt"
 	"sort"
 
@@ -164,17 +165,34 @@ func replayRelevant(operation types.Operation) bool {
 }
 
 func compareProvenance(baseline, candidate types.RunCapsule) []types.Observation {
-	fields := []struct{ name, before, after string }{
-		{"commit_sha", baseline.Provenance.CommitSHA, candidate.Provenance.CommitSHA},
-		{"dirty_digest", baseline.Provenance.DirtyDigest, candidate.Provenance.DirtyDigest},
-		{"build_id", baseline.Provenance.BuildID, candidate.Provenance.BuildID},
+	fields := []struct {
+		path          string
+		before, after any
+	}{
+		{"identity.project_id", baseline.ProjectID, candidate.ProjectID},
+		{"identity.service_name", baseline.ServiceName, candidate.ServiceName},
+		{"provenance.repository_url", baseline.Provenance.RepositoryURL, candidate.Provenance.RepositoryURL},
+		{"provenance.project_id", baseline.Provenance.ProjectID, candidate.Provenance.ProjectID},
+		{"provenance.commit_sha", baseline.Provenance.CommitSHA, candidate.Provenance.CommitSHA},
+		{"provenance.dirty_digest", baseline.Provenance.DirtyDigest, candidate.Provenance.DirtyDigest},
+		{"provenance.build_id", baseline.Provenance.BuildID, candidate.Provenance.BuildID},
+		{"provenance.container_id", baseline.Provenance.ContainerID, candidate.Provenance.ContainerID},
+		{"provenance.runtime", baseline.Provenance.Runtime, candidate.Provenance.Runtime},
+		{"provenance.dependency_lock", baseline.Provenance.DependencyLock, candidate.Provenance.DependencyLock},
+		{"provenance.feature_flags", baseline.Provenance.FeatureFlags, candidate.Provenance.FeatureFlags},
+		{"provenance.environment_facts", baseline.Provenance.EnvironmentFacts, candidate.Provenance.EnvironmentFacts},
+		{"provenance.entrypoint", baseline.Provenance.Entrypoint, candidate.Provenance.Entrypoint},
+		{"provenance.missing", baseline.Provenance.Missing, candidate.Provenance.Missing},
+		{"model_configuration", baseline.Model, candidate.Model},
 	}
 	result := []types.Observation{}
 	for _, field := range fields {
-		if field.before == field.after {
+		beforeCanonical, beforeErr := CanonicalJSON(field.before)
+		afterCanonical, afterErr := CanonicalJSON(field.after)
+		if beforeErr == nil && afterErr == nil && bytes.Equal(beforeCanonical, afterCanonical) {
 			continue
 		}
-		result = append(result, types.Observation{Kind: "provenance_changed", Path: "provenance." + field.name, Before: field.before, After: field.after, Rule: "normalized_exact", Confidence: 1, Evidence: []types.EvidenceRef{{CapsuleID: baseline.CapsuleID, Field: field.name}, {CapsuleID: candidate.CapsuleID, Field: field.name}}})
+		result = append(result, types.Observation{Kind: "provenance_changed", Path: field.path, Before: field.before, After: field.after, Rule: "canonical_exact", Confidence: 1, Evidence: []types.EvidenceRef{{CapsuleID: baseline.CapsuleID, Field: field.path}, {CapsuleID: candidate.CapsuleID, Field: field.path}}})
 	}
 	return result
 }

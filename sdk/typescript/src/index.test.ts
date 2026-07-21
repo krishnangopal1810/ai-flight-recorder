@@ -2,11 +2,22 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { boundary, testing } from "./index.js";
+import { trace } from "@opentelemetry/api";
+import { boundary, setRunProvenance, testing } from "./index.js";
 
 afterEach(() => { delete process.env.FLIGHT_REPLAY_PLAN; testing.reset(); });
 
 describe("boundary", () => {
+	it("emits canonical dependency and runtime provenance", () => {
+		const attributes = new Map<string, unknown>();
+		const getSpan = vi.spyOn(trace, "getSpan").mockReturnValue({setAttribute: (key: string, value: unknown) => { attributes.set(key, value); }} as never);
+		setRunProvenance({projectId: "support", runtime: "node:22", dependencyLock: {"package-lock.json": "sha256:bbb", "package.json": "sha256:aaa"}, featureFlags: {retrieval: "v2"}});
+		expect(attributes.get("flight.runtime")).toBe("node:22");
+		expect(attributes.get("flight.dependency_lock")).toBe('{"package-lock.json":"sha256:bbb","package.json":"sha256:aaa"}');
+		expect(attributes.get("flight.feature_flags")).toBe('{"retrieval":"v2"}');
+		getSpan.mockRestore();
+	});
+
   it("calls live outside replay", async () => {
     await expect(boundary({city: "Pune"}, async () => ({temp: 25}), {logicalKey: "weather", boundaryClass: "api", sideEffect: "read_only"})).resolves.toEqual({temp: 25});
   });
