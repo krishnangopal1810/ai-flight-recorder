@@ -1,26 +1,47 @@
 package types
 
-import "encoding/json"
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+)
 
-// Capsule minor versions are forward-compatible: fields unknown to this
-// binary are retained byte-for-byte at their original top-level key.
+// Capsule minor versions are forward-compatible. Run capsules are immutable,
+// so the original document is retained to merge unknown fields back at every
+// nested object and array position during storage or export.
 func (c RunCapsule) MarshalJSON() ([]byte, error) {
 	type wire RunCapsule
 	known, err := json.Marshal(wire(c))
 	if err != nil {
 		return nil, err
 	}
-	if len(c.UnknownFields) == 0 {
+	if len(c.unknownDocument) == 0 && len(c.UnknownFields) == 0 {
 		return known, nil
 	}
-	var document map[string]json.RawMessage
-	if err := json.Unmarshal(known, &document); err != nil {
+	var document any
+	if err := decodeJSONDocument(known, &document); err != nil {
 		return nil, err
 	}
-	for key, value := range c.UnknownFields {
-		if _, reserved := capsuleKnownFields[key]; !reserved {
-			document[key] = append(json.RawMessage(nil), value...)
+	if len(c.unknownDocument) > 0 {
+		var original any
+		if err := decodeJSONDocument(c.unknownDocument, &original); err != nil {
+			return nil, err
 		}
+		document = mergeUnknownJSON(document, original)
+	}
+	root, ok := document.(map[string]any)
+	if !ok {
+		return nil, errors.New("capsule root must be an object")
+	}
+	for key, value := range c.UnknownFields {
+		if _, reserved := capsuleKnownFields[key]; reserved {
+			continue
+		}
+		var decoded any
+		if err := decodeJSONDocument(value, &decoded); err != nil {
+			return nil, err
+		}
+		root[key] = decoded
 	}
 	return json.Marshal(document)
 }
@@ -36,6 +57,7 @@ func (c *RunCapsule) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	*c = RunCapsule(decoded)
+	c.unknownDocument = append(json.RawMessage(nil), data...)
 	for key := range capsuleKnownFields {
 		delete(document, key)
 	}
@@ -43,6 +65,42 @@ func (c *RunCapsule) UnmarshalJSON(data []byte) error {
 		c.UnknownFields = document
 	}
 	return nil
+}
+
+func mergeUnknownJSON(current, original any) any {
+	switch typed := current.(type) {
+	case map[string]any:
+		previous, ok := original.(map[string]any)
+		if !ok {
+			return current
+		}
+		for key, oldValue := range previous {
+			newValue, exists := typed[key]
+			if !exists {
+				typed[key] = oldValue
+				continue
+			}
+			typed[key] = mergeUnknownJSON(newValue, oldValue)
+		}
+	case []any:
+		previous, ok := original.([]any)
+		if !ok {
+			return current
+		}
+		for index := 0; index < len(typed) && index < len(previous); index++ {
+			typed[index] = mergeUnknownJSON(typed[index], previous[index])
+		}
+	}
+	return current
+}
+
+func decodeJSONDocument(data []byte, destination any) error {
+	if !json.Valid(data) {
+		return errors.New("invalid JSON document")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	return decoder.Decode(destination)
 }
 
 var capsuleKnownFields = map[string]struct{}{
