@@ -32,9 +32,6 @@ func CanonicalJSON(value any) ([]byte, error) {
 }
 
 func FinalizeCapsule(capsule *types.RunCapsule, payloads map[string][]byte) error {
-	if capsule.SchemaVersion == "" {
-		capsule.SchemaVersion = types.SchemaVersion
-	}
 	digests := make([]string, 0, len(payloads))
 	for expected, data := range payloads {
 		actual := DigestBytes(data)
@@ -43,8 +40,27 @@ func FinalizeCapsule(capsule *types.RunCapsule, payloads map[string][]byte) erro
 		}
 		digests = append(digests, actual)
 	}
+	return finalizeCapsuleDigests(capsule, digests)
+}
+
+func finalizeCapsuleDigests(capsule *types.RunCapsule, digests []string) error {
+	if capsule.SchemaVersion == "" {
+		capsule.SchemaVersion = types.SchemaVersion
+	}
+	digests = append([]string(nil), digests...)
 	sort.Strings(digests)
+	for index, digest := range digests {
+		if !validSHA256Digest(digest) {
+			return types.NewError(types.ErrValidation, "capsule payload digest is invalid", "restore a capsule containing canonical sha256 payload digests", nil)
+		}
+		if index > 0 && digests[index-1] == digest {
+			return types.NewError(types.ErrValidation, "capsule payload digest is duplicated", "restore a capsule containing one entry per payload digest", nil)
+		}
+	}
 	capsule.Integrity = types.Integrity{Algorithm: "sha256", PayloadDigests: digests}
+	if err := validateCapturedPayloadReferences(*capsule); err != nil {
+		return err
+	}
 	capsule.CapsuleID = ""
 	manifest, err := CanonicalJSON(capsule)
 	if err != nil {
@@ -65,11 +81,24 @@ func FinalizeCapsule(capsule *types.RunCapsule, payloads map[string][]byte) erro
 	return nil
 }
 
-func VerifyCapsule(capsule types.RunCapsule, loadPayload func(string) ([]byte, error)) error {
+func VerifyCapsuleManifest(capsule types.RunCapsule) error {
 	if capsule.Integrity.Algorithm != "sha256" {
 		return types.NewError(types.ErrValidation, "unsupported capsule digest algorithm", "use sha256", nil)
 	}
-	payloads := make(map[string][]byte, len(capsule.Integrity.PayloadDigests))
+	expectedID, expectedRoot, expectedManifest := capsule.CapsuleID, capsule.Integrity.RootDigest, capsule.Integrity.ManifestDigest
+	if err := finalizeCapsuleDigests(&capsule, capsule.Integrity.PayloadDigests); err != nil {
+		return err
+	}
+	if !bytes.Equal([]byte(capsule.CapsuleID), []byte(expectedID)) || capsule.Integrity.RootDigest != expectedRoot || capsule.Integrity.ManifestDigest != expectedManifest {
+		return types.NewError(types.ErrValidation, "capsule manifest failed integrity verification", "restore a verified capsule or import the original bundle", nil)
+	}
+	return nil
+}
+
+func VerifyCapsule(capsule types.RunCapsule, loadPayload func(string) ([]byte, error)) error {
+	if err := VerifyCapsuleManifest(capsule); err != nil {
+		return err
+	}
 	for _, digest := range capsule.Integrity.PayloadDigests {
 		data, err := loadPayload(digest)
 		if err != nil {
@@ -78,14 +107,14 @@ func VerifyCapsule(capsule types.RunCapsule, loadPayload func(string) ([]byte, e
 		if actual := DigestBytes(data); actual != digest {
 			return types.NewError(types.ErrValidation, "capsule payload failed integrity verification", "restore a verified bundle; do not replay this capsule", fmt.Errorf("expected %s, got %s", digest, actual))
 		}
-		payloads[digest] = data
-	}
-	expectedID, expectedRoot, expectedManifest := capsule.CapsuleID, capsule.Integrity.RootDigest, capsule.Integrity.ManifestDigest
-	if err := FinalizeCapsule(&capsule, payloads); err != nil {
-		return err
-	}
-	if !bytes.Equal([]byte(capsule.CapsuleID), []byte(expectedID)) || capsule.Integrity.RootDigest != expectedRoot || capsule.Integrity.ManifestDigest != expectedManifest {
-		return types.NewError(types.ErrValidation, "capsule manifest failed integrity verification", "restore a verified capsule or import the original bundle", nil)
 	}
 	return nil
+}
+
+func validSHA256Digest(value string) bool {
+	if len(value) != len("sha256:")+sha256.Size*2 || value[:len("sha256:")] != "sha256:" {
+		return false
+	}
+	_, err := hex.DecodeString(value[len("sha256:"):])
+	return err == nil
 }

@@ -7,6 +7,8 @@ export type CapsuleSummary = components["schemas"]["CapsuleSummary"];
 export type Operation = components["schemas"]["operation"];
 export type Artifact = components["schemas"]["artifact"];
 export type Boundary = components["schemas"]["boundary.schema"];
+export type Playback = components["schemas"]["playback.schema"];
+export type PlaybackPayload = Playback["payloads"][number];
 type GeneratedCapsule = components["schemas"]["RunCapsule"];
 export type Capsule = Pick<GeneratedCapsule,
   "schema_version" | "capsule_id" | "source_capsule_id" | "trace_id" | "project_id" | "service_name" |
@@ -39,6 +41,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   async capsules(): Promise<CapsuleSummary[]> { return (await request<{items: CapsuleSummary[]}>("/api/v1/capsules")).items; },
   capsule(id: string): Promise<Capsule> { return request(`/api/v1/capsules/${encodeURIComponent(id)}`); },
+  playback(id: string): Promise<Playback> { return request(`/api/v1/capsules/${encodeURIComponent(id)}/playback`); },
   completeness(id: string): Promise<CapsuleCompleteness> { return request(`/api/v1/capsules/${encodeURIComponent(id)}/completeness`); },
   diff(baseline: string, candidate: string): Promise<DiffResult> { return request("/api/v1/diffs", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({baseline_capsule_id: baseline, candidate_capsule_id: candidate})}); },
   job(id: string): Promise<Job> { return request(`/api/v1/jobs/${encodeURIComponent(id)}`); },

@@ -2,10 +2,13 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/krishnangopal1810/ai-flight-recorder/internal/types"
 )
+
+var ErrPayloadCorrupt = errors.New("stored payload digest mismatch")
 
 type Token struct {
 	ID        string

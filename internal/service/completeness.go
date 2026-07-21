@@ -8,11 +8,11 @@ import (
 )
 
 func (s *CapsuleService) Completeness(ctx context.Context, id string) (types.CapsuleCompleteness, error) {
-	capsule, err := s.Get(ctx, id, false)
+	playback, err := s.Playback(ctx, id)
 	if err != nil {
 		return types.CapsuleCompleteness{}, err
 	}
-	return CompletenessReport(capsule), nil
+	return playback.Completeness, nil
 }
 
 func CompletenessReport(capsule types.RunCapsule) types.CapsuleCompleteness {

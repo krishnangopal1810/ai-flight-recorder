@@ -191,7 +191,7 @@ func (r *LocalRepository) LoadPayload(_ context.Context, digest string) ([]byte,
 		return nil, types.NewError(types.ErrNotFound, "payload not found", "restore the referenced payload or import its bundle", err)
 	}
 	if digestBytes(data) != digest {
-		return nil, types.NewError(types.ErrStorage, "stored payload digest mismatch", "quarantine the local store and restore a verified bundle", nil)
+		return nil, types.NewError(types.ErrStorage, "stored payload digest mismatch", "quarantine the local store and restore a verified bundle", ErrPayloadCorrupt)
 	}
 	return data, nil
 }

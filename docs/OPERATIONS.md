@@ -38,6 +38,12 @@ policy:
 
 The coordinator needs access to the selected Docker or Podman engine. Replayed application containers never receive that socket; they run non-root, capability-free, read-only except for declared tmpfs scratch space, resource-limited, and on an internal network whose only peer is the Flight gateway. The operator selects the trusted gateway with `FLIGHT_GATEWAY_IMAGE`; replay API clients cannot replace it. Set `FLIGHT_OCI_EGRESS_NETWORK` to an existing engine network where declared model and sandbox hosts resolve. The gateway joins that network only when the immutable plan has live allowed hosts; an all-substituted replay remains on its private internal network.
 
+## Playback and damaged evidence
+
+`flight playback <capsule-id> --json` and `GET /api/v1/capsules/{id}/playback` are passive: they do not launch the recorded entrypoint, a replay worker, or any provider request. The response verifies the manifest/root identity first and classifies each declared payload independently as `available`, `missing`, `corrupt`, or `unavailable`. Available values have bounded, encoding-labelled previews; corrupt bytes are never returned. The response carries dynamic completeness, so payload damage leaves unaffected playback evidence inspectable while marking playback/diff incomplete and replay/bisect blocked.
+
+Treat `payload_missing` as a storage/retention recovery incident, `payload_corrupt` as an integrity incident, and `payload_unavailable` as a backend availability incident. Restore the original digest-addressed object from a coordinated backup, then retry strict capsule verification. Do not repair an object under an existing digest with different bytes.
+
 Compose mounts `/var/run/docker.sock` by default because bind sources are resolved on the engine host (including a Colima VM), not at the local client context path. Set `FLIGHT_DOCKER_SOCKET` only when a rootless or remote daemon exposes a different path on that daemon host.
 
 Replay does not bind client-local temporary paths into containers. The immutable replay envelope is copied through the OCI API into a daemon-local named volume and mounted read-only; captured candidate OTLP is copied back through the OCI API from a bounded gateway tmpfs. This is required for Colima, remote engines, and the service-inside-Compose topology. `make security` builds the trusted local gateway image and runs this contract uncached when Docker is available.

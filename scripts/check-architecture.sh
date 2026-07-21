@@ -15,6 +15,7 @@ check_forbidden internal/types 'internal/(config|repository|service|runtime)' 't
 check_forbidden internal/config 'internal/(repository|service|runtime)' 'config may only depend on types and providers.'
 check_forbidden internal/repository 'internal/(service|runtime)' 'repositories may not depend on services or runtimes.'
 check_forbidden internal/service 'internal/runtime' 'services must not depend on HTTP, CLI, OTLP, or worker runtimes.'
+check_forbidden internal/service/playback.go '"(net|net/http|os/exec|github.com/krishnangopal1810/ai-flight-recorder/internal/providers)' 'playback is passive evidence projection; use only the repository and typed values, never network, process, or runtime providers.'
 check_forbidden internal/runtime 'database/sql|modernc.org/sqlite|pgx|minio-go' 'runtime code must call a service instead of accessing storage directly.'
 
 if rg -n 'log\.(Print|Printf|Println|Fatal|Fatalf|Panic|Panicf)' --glob '*.go' --glob '!scripts/**' . >/tmp/flight-log-check 2>/dev/null; then

@@ -30,7 +30,7 @@ paths:
       operationId: playbackCapsule
       parameters: [{$ref: '#/components/parameters/CapsuleID'}]
       responses:
-        '200': {description: Recorded execution without application execution}
+        '200': {description: Manifest-verified recorded evidence without application execution, content: {application/json: {schema: {$ref: '#/components/schemas/Playback'}}}}
   /capsules/{id}/payloads/{digest}:
     get:
       operationId: getCapsulePayload
@@ -138,6 +138,7 @@ components:
     TokenID: {name: id, in: path, required: true, schema: {type: string, format: uuid}}
   schemas:
     RunCapsule: {$ref: 'run-capsule.schema.json'}
+    Playback: {$ref: 'playback.schema.json'}
     CapsuleCompleteness: {$ref: 'capsule-completeness.schema.json'}
     ReplayPlan: {$ref: 'replay-plan.schema.json'}
     Evaluator: {$ref: 'evaluator.schema.json'}

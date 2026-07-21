@@ -237,7 +237,7 @@ func (r *HostedRepository) LoadPayload(ctx context.Context, digest string) ([]by
 		return nil, types.NewError(types.ErrNotFound, "payload not found", "restore the referenced object or import its bundle", err)
 	}
 	if digestBytes(data) != digest {
-		return nil, types.NewError(types.ErrStorage, "stored payload digest mismatch", "quarantine the object store and restore a verified backup", nil)
+		return nil, types.NewError(types.ErrStorage, "stored payload digest mismatch", "quarantine the object store and restore a verified backup", ErrPayloadCorrupt)
 	}
 	return data, nil
 }

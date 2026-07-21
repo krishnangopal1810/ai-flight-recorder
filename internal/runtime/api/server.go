@@ -146,12 +146,12 @@ func (s *Server) getCompleteness(writer http.ResponseWriter, request *http.Reque
 }
 
 func (s *Server) playback(writer http.ResponseWriter, request *http.Request) {
-	capsule, err := s.capsules.Get(request.Context(), request.PathValue("id"), false)
+	playback, err := s.capsules.Playback(request.Context(), request.PathValue("id"))
 	if err != nil {
 		writeError(writer, err)
 		return
 	}
-	writeJSON(writer, http.StatusOK, map[string]any{"capsule": capsule, "mode": "playback", "executed": false})
+	writeJSON(writer, http.StatusOK, playback)
 }
 
 func (s *Server) getPayload(writer http.ResponseWriter, request *http.Request) {
