@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -122,12 +123,15 @@ func (r *Receiver) Capture(ctx context.Context, request *collectortrace.ExportTr
 						group.request.TerminalStatus = "error"
 					}
 					group.request.Provenance = provenance(spanAttributes, resourceAttributes)
-					group.request.Model = modelConfiguration(spanAttributes, resourceAttributes)
+					group.request.Model = mergeModelConfiguration(group.request.Model, modelConfiguration(spanAttributes, resourceAttributes))
 				}
 				operation := types.Operation{
 					SpanID: hex.EncodeToString(span.SpanId), ParentSpanID: hex.EncodeToString(span.ParentSpanId), LogicalKey: stringValue(spanAttributes["flight.logical_key"]),
 					Kind: operationKind(spanAttributes), Name: span.Name, StartTime: time.Unix(0, int64(span.StartTimeUnixNano)).UTC(), EndTime: time.Unix(0, int64(span.EndTimeUnixNano)).UTC(),
 					Status: statusName(span.Status), SemanticConventionVersion: semanticVersion, Attributes: safeAttributes(spanAttributes),
+				}
+				if operation.Kind == "llm" {
+					group.request.Model = mergeModelConfiguration(group.request.Model, modelConfiguration(spanAttributes, resourceAttributes))
 				}
 				captured := service.CaptureOperation{Operation: operation}
 				if input := firstValue(spanAttributes, "input.value", "openinference.span.input.value", "flight.input", "gen_ai.input.messages"); input != "" {
@@ -141,6 +145,9 @@ func (r *Receiver) Capture(ctx context.Context, request *collectortrace.ExportTr
 					if captured.OutputType == "" {
 						captured.OutputType = "application/json"
 					}
+				}
+				if operation.Kind == "evaluator" {
+					captured.Evaluation = evaluationForOperation(operation, spanAttributes)
 				}
 				if key := firstString(spanAttributes, "flight.boundary.logical_key"); key != "" {
 					ignorePaths := []string{}
@@ -278,8 +285,8 @@ func (r *Receiver) finalize(key string, pending *pendingTrace) {
 func mergeCaptureRequest(target *service.CaptureRequest, fragment service.CaptureRequest) {
 	if fragment.Provenance.Entrypoint != nil || fragment.Provenance.CommitSHA != "" {
 		target.Provenance = fragment.Provenance
-		target.Model = fragment.Model
 	}
+	target.Model = mergeModelConfiguration(target.Model, fragment.Model)
 	if fragment.SourceCapsuleID != "" {
 		target.SourceCapsuleID = fragment.SourceCapsuleID
 	}
@@ -412,6 +419,8 @@ func operationKind(values map[string]*commonv1.AnyValue) string {
 		return "agent"
 	case "chat", "text_completion", "generate_content":
 		return "llm"
+	case "embeddings":
+		return "embedding"
 	case "execute_tool", "tool_call":
 		return "tool"
 	default:
@@ -480,13 +489,23 @@ func modelConfiguration(span, resource map[string]*commonv1.AnyValue) types.Mode
 		}
 		return firstString(resource, keys...)
 	}
-	model := types.ModelConfiguration{Provider: read("gen_ai.system"), RequestedModel: read("gen_ai.request.model"), ProviderReportedModel: read("gen_ai.response.model"), Parameters: map[string]any{}, ResponseMetadata: map[string]any{}}
+	model := types.ModelConfiguration{Provider: read("gen_ai.provider.name", "gen_ai.system", "llm.provider", "llm.system"), RequestedModel: read("gen_ai.request.model", "llm.model_name"), ProviderReportedModel: read("gen_ai.response.model"), Parameters: map[string]any{}, ResponseMetadata: map[string]any{}}
+	if invocation := read("llm.invocation_parameters"); invocation != "" {
+		_ = json.Unmarshal([]byte(invocation), &model.Parameters)
+	}
 	for _, key := range []string{"gen_ai.request.temperature", "gen_ai.request.max_tokens", "gen_ai.request.top_p", "gen_ai.response.finish_reasons", "gen_ai.usage.input_tokens", "gen_ai.usage.output_tokens"} {
 		if value := read(key); value != "" {
 			if strings.HasPrefix(key, "gen_ai.request.") {
 				model.Parameters[strings.TrimPrefix(key, "gen_ai.request.")] = value
 			} else {
 				model.ResponseMetadata[key] = value
+			}
+		}
+	}
+	for _, values := range []map[string]*commonv1.AnyValue{resource, span} {
+		for key, value := range values {
+			if strings.HasPrefix(key, "llm.token_count.") || strings.HasPrefix(key, "llm.cost.") {
+				model.ResponseMetadata[key] = anyString(value)
 			}
 		}
 	}
@@ -497,6 +516,59 @@ func modelConfiguration(span, resource map[string]*commonv1.AnyValue) types.Mode
 		model.ResponseMetadata = nil
 	}
 	return model
+}
+
+func mergeModelConfiguration(current, observed types.ModelConfiguration) types.ModelConfiguration {
+	if observed.Provider != "" {
+		current.Provider = observed.Provider
+	}
+	if observed.RequestedModel != "" {
+		current.RequestedModel = observed.RequestedModel
+	}
+	if observed.ProviderReportedModel != "" {
+		current.ProviderReportedModel = observed.ProviderReportedModel
+	}
+	if len(observed.Parameters) > 0 {
+		if current.Parameters == nil {
+			current.Parameters = map[string]any{}
+		}
+		for key, value := range observed.Parameters {
+			current.Parameters[key] = value
+		}
+	}
+	if len(observed.ResponseMetadata) > 0 {
+		if current.ResponseMetadata == nil {
+			current.ResponseMetadata = map[string]any{}
+		}
+		for key, value := range observed.ResponseMetadata {
+			current.ResponseMetadata[key] = value
+		}
+	}
+	return current
+}
+
+func evaluationForOperation(operation types.Operation, values map[string]*commonv1.AnyValue) *types.Evaluation {
+	id := firstString(values, "flight.evaluation.id", "flight.logical_key")
+	if id == "" {
+		id = operation.Name
+	}
+	return &types.Evaluation{
+		ID:        id,
+		Version:   firstString(values, "flight.evaluation.version"),
+		Score:     finiteFloat(values["flight.evaluation.score"]),
+		Threshold: finiteFloat(values["flight.evaluation.threshold"]),
+	}
+}
+
+func finiteFloat(value *commonv1.AnyValue) *float64 {
+	if value == nil {
+		return nil
+	}
+	parsed, err := strconv.ParseFloat(anyString(value), 64)
+	if err != nil || math.IsNaN(parsed) || math.IsInf(parsed, 0) {
+		return nil
+	}
+	return &parsed
 }
 
 func artifactEvent(spanID string, index int, values map[string]*commonv1.AnyValue) (types.Artifact, []byte) {
@@ -510,11 +582,24 @@ func artifactEvent(spanID string, index int, values map[string]*commonv1.AnyValu
 }
 
 func safeAttributes(values map[string]*commonv1.AnyValue) map[string]string {
-	allowedPrefixes := []string{"flight.", "openinference.span.kind", "gen_ai.operation.name", "gen_ai.system", "gen_ai.request.model", "gen_ai.response.model"}
+	allowedPrefixes := []string{"flight.boundary.", "flight.environment.", "gen_ai.usage.", "llm.token_count.", "llm.cost."}
+	allowed := map[string]bool{
+		"flight.logical_key": true, "flight.operation.kind": true, "openinference.span.kind": true, "gen_ai.operation.name": true,
+		"flight.reference.model_callback_invoked": true,
+		"flight.evaluation.id":                    true, "flight.evaluation.version": true, "flight.evaluation.score": true, "flight.evaluation.threshold": true,
+		"gen_ai.provider.name": true, "gen_ai.system": true, "gen_ai.request.model": true, "gen_ai.response.model": true,
+		"llm.system": true, "llm.provider": true, "llm.model_name": true, "llm.invocation_parameters": true,
+		"prompt.id": true, "prompt.vendor": true, "agent.name": true, "tool.id": true, "tool.name": true,
+		"document.id": true, "document.score": true,
+	}
 	blocked := map[string]bool{"flight.input": true, "flight.output": true, "flight.feature_flags": true, "flight.repository.url": true, "flight.artifact.content_base64": true}
 	result := map[string]string{}
 	for key, value := range values {
 		if blocked[key] {
+			continue
+		}
+		if allowed[key] {
+			result[key] = anyString(value)
 			continue
 		}
 		for _, prefix := range allowedPrefixes {

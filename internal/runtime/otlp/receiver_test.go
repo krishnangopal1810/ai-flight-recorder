@@ -41,7 +41,7 @@ func TestReceiverCreatesReplayAwareCapsuleFromOTLP(t *testing.T) {
 			Attributes: []*commonv1.KeyValue{
 				stringKV("openinference.span.kind", "AGENT"), stringKV("input.value", `{"question":"policy"}`),
 				stringKV("output.value", `{"answer":"incorrect"}`), stringKV("flight.entrypoint.command", `["python","app.py"]`),
-				stringKV("flight.entrypoint.image", "example:latest"), stringKV("flight.git.commit", "abc"),
+				stringKV("flight.entrypoint.image", "example:latest"), stringKV("flight.git.commit", "abc"), boolKV("flight.reference.model_callback_invoked", true),
 			},
 		}}}},
 	}}}
@@ -49,7 +49,7 @@ func TestReceiverCreatesReplayAwareCapsuleFromOTLP(t *testing.T) {
 	if err != nil || rejected != 0 || len(capsules) != 1 {
 		t.Fatalf("capture: %#v rejected=%d err=%v", capsules, rejected, err)
 	}
-	if capsules[0].Operations[0].Kind != "agent" || capsules[0].Completeness["playback"].State != "ready" {
+	if capsules[0].Operations[0].Kind != "agent" || capsules[0].Operations[0].Attributes["flight.reference.model_callback_invoked"] != "true" || capsules[0].Completeness["playback"].State != "ready" {
 		t.Fatalf("unexpected capsule: %#v", capsules[0])
 	}
 }
@@ -103,7 +103,7 @@ func TestReceiverMergesCrossBatchChildrenDuringLateSpanGrace(t *testing.T) {
 	resource := func(span *tracev1.Span) *collectortrace.ExportTraceServiceRequest {
 		return &collectortrace.ExportTraceServiceRequest{ResourceSpans: []*tracev1.ResourceSpans{{Resource: &resourcev1.Resource{Attributes: []*commonv1.KeyValue{stringKV("service.name", "agent"), stringKV("flight.project.id", "demo"), boolKV("flight.capture", true)}}, ScopeSpans: []*tracev1.ScopeSpans{{Spans: []*tracev1.Span{span}}}}}}
 	}
-	child := resource(&tracev1.Span{TraceId: traceID, SpanId: childID, ParentSpanId: rootID, Name: "tool", StartTimeUnixNano: uint64(time.Unix(2, 0).UnixNano()), EndTimeUnixNano: uint64(time.Unix(3, 0).UnixNano()), Attributes: []*commonv1.KeyValue{stringKV("openinference.span.kind", "TOOL")}})
+	child := resource(&tracev1.Span{TraceId: traceID, SpanId: childID, ParentSpanId: rootID, Name: "model", StartTimeUnixNano: uint64(time.Unix(2, 0).UnixNano()), EndTimeUnixNano: uint64(time.Unix(3, 0).UnixNano()), Attributes: []*commonv1.KeyValue{stringKV("openinference.span.kind", "LLM"), stringKV("gen_ai.provider.name", "openai"), stringKV("gen_ai.request.model", "gpt-flight")}})
 	root := resource(&tracev1.Span{TraceId: traceID, SpanId: rootID, Name: "agent", StartTimeUnixNano: uint64(time.Unix(1, 0).UnixNano()), EndTimeUnixNano: uint64(time.Unix(4, 0).UnixNano()), Attributes: []*commonv1.KeyValue{stringKV("openinference.span.kind", "AGENT")}})
 	childDone := make(chan error, 1)
 	go func() { _, _, captureErr := receiver.Capture(ctx, child); childDone <- captureErr }()
@@ -117,6 +117,9 @@ func TestReceiverMergesCrossBatchChildrenDuringLateSpanGrace(t *testing.T) {
 	}
 	if len(capsules[0].Operations) != 2 {
 		t.Fatalf("late child was not assembled: %#v", capsules[0].Operations)
+	}
+	if capsules[0].Model.Provider != "openai" || capsules[0].Model.RequestedModel != "gpt-flight" {
+		t.Fatalf("late child model metadata was not assembled: %#v", capsules[0].Model)
 	}
 	stored, err := repo.ListCapsules(ctx, "demo", 10)
 	if err != nil || len(stored) != 1 {

@@ -20,8 +20,15 @@ Equivalent APIs cover run provenance, argv entrypoint registration, artifact att
 | `flight.artifact` | Artifact event with logical identity, media type, digest, and bytes. |
 | `flight.sandbox` | Named sandbox-to-destination declaration. |
 | `flight.environment.<NAME>.digest` | One-way environment fact; never the value. |
+| `flight.evaluation.id`, `.version`, `.score`, `.threshold` | Evaluator identity and scalar result metadata on an OpenInference `EVALUATOR` span. |
 
 Boundary occurrence is counted by aligned parent, boundary class, and logical key. A substitution additionally requires the canonical request digest. JSON-pointer ignore rules are explicit and versioned; neither SDK falls through to a live call when a match is missing or ambiguous.
+
+## OTLP and OpenInference ingestion
+
+The collector consumes the [official OpenInference span-kind taxonomy](https://arize-ai.github.io/openinference/spec/semantic_conventions.html) for agent, LLM, retriever, tool, evaluator, and prompt operations, plus the OTel GenAI operation name where supplied. `flight.operation.kind` provides explicit application kinds such as `mcp` that are not part of the OpenInference taxonomy. The producer's scope or resource schema URL is retained on every logical operation.
+
+Operation input and output values, artifact bytes, and evaluator evidence cross the ordered capture-policy boundary and become content-addressed payload references. Evaluator identity, version, score, and threshold are metadata; evaluator input and evidence reuse the evaluator operation's payload references so content cannot bypass redaction, exclusion, or size limits. Model provider, requested/reported model, invocation parameters, usage, token counts, and cost are associated from the LLM span and retained as policy-processed metadata.
 
 During replay, `FLIGHT_REPLAY_PLAN` points at the read-only envelope and `FLIGHT_WORKSPACE` points at ephemeral writable space. `FLIGHT_REPLAY_MODEL`, when set with `flight replay --model`, is the selected candidate model name. Credentials remain worker configuration and are only passed for environment names declared by `flight.yaml`.
 
