@@ -11,7 +11,7 @@ base="http://127.0.0.1:${FLIGHT_HTTP_PORT}"
 
 case "$kind" in
   logs) docker compose -f deploy/docker-compose.yml logs --no-color --tail "${2:-200}" flight ;;
-  metrics) curl --fail --silent --show-error "$base/metrics" ;;
+  metrics) curl --fail --silent --show-error -H "Authorization: Bearer ${token}" "$base/metrics" ;;
   capsules) curl --fail --silent --show-error -H "Authorization: Bearer ${token}" "$base/api/v1/capsules?limit=${2:-20}" ;;
   traces)
     capsule_id="${2:?observe: capsule ID required for traces; run make observe QUERY=capsules first}"

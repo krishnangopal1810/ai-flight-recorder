@@ -54,6 +54,38 @@ func TestLocalCASRejectsCorruptExistingObject(t *testing.T) {
 	}
 }
 
+func TestAFRSEC003LocalStorageUsesRestrictivePermissions(t *testing.T) {
+	ctx := context.Background()
+	directory := t.TempDir()
+	databasePath, blobPath := filepath.Join(directory, "flight.db"), filepath.Join(directory, "blobs")
+	if err := os.Mkdir(blobPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	repo, err := OpenLocal(ctx, databasePath, blobPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	payload := []byte("restricted evidence")
+	digest := digestBytes(payload)
+	if err := repo.writeBlob(digest, payload); err != nil {
+		t.Fatal(err)
+	}
+	for path, want := range map[string]os.FileMode{
+		databasePath:              0o600,
+		blobPath:                  0o700,
+		repo.blobFilename(digest): 0o600,
+	} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode().Perm(); got != want {
+			t.Fatalf("permissions for %s = %04o, want %04o", path, got, want)
+		}
+	}
+}
+
 func TestRetentionKeepsSharedBlobUntilFinalReferenceExpires(t *testing.T) {
 	ctx := context.Background()
 	directory := t.TempDir()
