@@ -85,10 +85,11 @@ func TestAFRT05RepeatedTrialsNeverClaimFalseDeterminism(t *testing.T) {
 }
 
 func TestAFRT06PlaybackSurvivesMissingReplayEvidence(t *testing.T) {
+	request := &types.PayloadRef{Digest: "sha256:" + strings.Repeat("b", 64), State: types.PayloadStateCaptured}
 	capsule := types.RunCapsule{
-		Operations: []types.Operation{{SpanID: "root", Kind: "agent", Name: "run"}},
+		Operations: []types.Operation{{SpanID: "root", Kind: "agent", Name: "run", Input: request}},
 		Provenance: types.Provenance{Entrypoint: &types.Entrypoint{Command: []string{"/agent"}, Image: "sha256:" + strings.Repeat("a", 64)}},
-		Boundaries: []types.Boundary{{ID: "missing-response", LogicalKey: "tool.lookup"}},
+		Boundaries: []types.Boundary{{ID: "missing-response", OperationSpanID: "root", LogicalKey: "tool.lookup"}},
 	}
 	ComputeCompleteness(&capsule)
 	if capsule.Completeness["playback"].State != types.CompletenessReady || capsule.Completeness["replay"].State != types.CompletenessBlocked {

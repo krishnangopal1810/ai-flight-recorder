@@ -129,7 +129,11 @@ func ComputeCompleteness(capsule *types.RunCapsule) {
 	}
 	for _, boundary := range capsule.Boundaries {
 		operation := operations[boundary.OperationSpanID]
-		if payloadOmitted(operation.Input) {
+		if operation.Input == nil {
+			item := types.MissingItem{Code: "boundary_request_missing", BoundaryID: boundary.ID, Message: "recorded request content is missing and cannot be matched safely"}
+			replay.State, replay.Missing = types.CompletenessBlocked, append(replay.Missing, item)
+			bisect.State, bisect.Missing = types.CompletenessBlocked, append(bisect.Missing, item)
+		} else if payloadOmitted(operation.Input) {
 			item := types.MissingItem{Code: "boundary_request_omitted", BoundaryID: boundary.ID, Message: "recorded request content was omitted and cannot be matched safely"}
 			replay.State, replay.Missing = types.CompletenessBlocked, append(replay.Missing, item)
 			bisect.State, bisect.Missing = types.CompletenessBlocked, append(bisect.Missing, item)

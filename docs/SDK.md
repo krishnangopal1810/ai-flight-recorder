@@ -14,7 +14,7 @@ Equivalent APIs cover run provenance, argv entrypoint registration, artifact att
 | `flight.runtime`, `flight.dependency_lock`, `flight.feature_flags` | Explicit runtime identity plus canonical dependency-lock digests and feature flags. |
 | `flight.entrypoint.command`, `.image`, `.input_mode`, `.output_mode`, `.model_hosts` | Replay entrypoint evidence. |
 | `flight.logical_key` | Stable developer operation identity. |
-| `flight.boundary.logical_key`, `.class`, `.parent_logical_key`, `.request_digest` | Exact boundary identity and aligned parent. |
+| `flight.boundary.logical_key`, `.class`, `.parent_logical_key`, `.request_digest` | Producer boundary identity and aligned parent; the collector replaces the supplied digest with its post-policy canonical digest. |
 | `flight.boundary.side_effect`, `.replay_policy`, `.sandbox` | Safety classification and declared execution policy. |
 | `flight.boundary.matching_mode`, `.ignore_paths` | Canonical request comparison rules. |
 | `flight.input`, `flight.output` | Capture-policy inputs; never product telemetry. |
@@ -23,7 +23,7 @@ Equivalent APIs cover run provenance, argv entrypoint registration, artifact att
 | `flight.environment.<NAME>.digest` | One-way environment fact; never the value. |
 | `flight.evaluation.id`, `.version`, `.score`, `.threshold` | Evaluator identity and scalar result metadata on an OpenInference `EVALUATOR` span. |
 
-Boundary occurrence is counted by aligned parent, boundary class, and logical key. A substitution additionally requires the canonical request digest. JSON-pointer ignore rules are explicit and versioned; neither SDK falls through to a live call when a match is missing or ambiguous.
+Boundary occurrence is counted by aligned parent, boundary class, and logical key. A substitution additionally requires the canonical request digest. The SDK emits that digest for immediate replay metadata, but the collector never trusts or persists a producer-computed pre-policy identity: it applies capture policy, applies the declared JSON-pointer ignores, canonicalizes with RFC 8785, and derives the stored digest itself. Neither SDK falls through to a live call when a match is missing or ambiguous.
 
 ## OTLP and OpenInference ingestion
 

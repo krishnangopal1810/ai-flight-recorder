@@ -24,6 +24,25 @@ func TestPolicyRedactsSecretSelectedByPathBeforePersistence(t *testing.T) {
 	}
 }
 
+func TestDefaultPolicyRedactsNamedSecretsAndEmailPII(t *testing.T) {
+	engine, err := NewPolicyEngine(config.Default(t.TempDir()).Policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := engine.ApplyJSON("operation.input", []byte(`{"api_key":"afr_test_key_123","password":"afr_test_password_456","email":"alice.privacy@example.test"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{"afr_test_key_123", "afr_test_password_456", "alice.privacy@example.test"} {
+		if strings.Contains(string(result.Data), value) {
+			t.Fatalf("default policy retained %q: %s", value, result.Data)
+		}
+	}
+	if result.Redactions["authorization"] != 2 || result.Redactions["email"] != 1 {
+		t.Fatalf("redaction summary = %#v", result.Redactions)
+	}
+}
+
 func TestPolicyOmissionIsTyped(t *testing.T) {
 	engine, err := NewPolicyEngine(config.CapturePolicy{Version: "1", Mode: "strict", MaxFieldSize: 3})
 	if err != nil {

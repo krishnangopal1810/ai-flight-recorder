@@ -7,6 +7,7 @@ Production telemetry is hostile input. Replay source code and evaluator containe
 ## Required controls
 
 - Ordered policy enforcement precedes all durable writes and observability.
+- Boundary match identity is derived from the policy-processed canonical request, never from an untrusted producer's pre-policy digest.
 - Strict-mode failures retain only policy-safe diagnostic metadata.
 - Local mode binds loopback. Shared mode requires TLS and scoped bearer tokens.
 - Replays run with the controls in the replay-isolation design document.
@@ -14,4 +15,4 @@ Production telemetry is hostile input. Replay source code and evaluator containe
 - Unknown and mutating boundaries are substituted or blocked unless a sandbox and explicit flag are present.
 - Secrets are allowlisted per replay and never included in capsule manifests or logs.
 
-The current blocking security suite scans the local SQLite/filesystem store for a seeded value and executes the OCI isolation probe without Go's test cache. The broader hosted-store, export, observability, and quarantine scans required for V1 remain tracked in the [V1 evidence ledger](V1_EVIDENCE.md); do not infer those guarantees from the narrower current test.
+The blocking AFR-T08 contract sends deterministic API-key, token, password, email-PII, exclusion, and strict-failure fixtures through capture policy. It scans SQLite/filesystem and PostgreSQL/S3-compatible stores, searchable identity rows, decompressed bundles, quarantine, returned diagnostics, structured service logs, and metrics for every seed. The live Compose proof is `scripts/privacy-smoke.sh`; backend-neutral security tests apply the same capture contract directly to both repositories. V1 emits local structured logs and Prometheus metrics but configures no outbound product-telemetry exporter; adding one requires an equivalent fail-closed allowlist and sink scan.

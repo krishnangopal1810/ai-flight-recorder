@@ -100,6 +100,53 @@ func TestAFRCAP003ReplayInputComesFromRootInsteadOfSequencePosition(t *testing.T
 	}
 }
 
+func TestAFRSEC001BoundaryDigestComesFromPostPolicyCanonicalRequest(t *testing.T) {
+	ctx := context.Background()
+	directory := t.TempDir()
+	repo, err := repository.OpenLocal(ctx, filepath.Join(directory, "flight.db"), filepath.Join(directory, "blobs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	policy, err := NewPolicyEngine(config.CapturePolicy{Version: "1", Mode: "strict", MaxFieldSize: 1024, Rules: []config.PolicyRule{{Name: "secret", Path: "*", Pattern: `AFR_SECRET_[A-Z0-9]+`, Action: "redact", Replacement: "[REDACTED]"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := []byte(`{"z":"AFR_SECRET_123","a":1}`)
+	capsule, err := NewCapsuleService(repo, policy).Capture(ctx, CaptureRequest{
+		TraceID: "33333333333333333333333333333333", ProjectID: "privacy", ServiceName: "agent",
+		Operations: []CaptureOperation{{Operation: types.Operation{SpanID: "3333333333333333", Kind: "tool"}, Input: raw, InputType: "application/json", Output: []byte(`{"ok":true}`), OutputType: "application/json", Boundary: &types.Boundary{LogicalKey: "tool", Class: "tool", RequestDigest: DigestBytes(raw), ReplayPolicy: "substitute", MatchingRule: types.MatchingRule{Mode: "json_pointer", IgnorePaths: []string{"/a"}}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := CanonicalJSON(map[string]any{"z": "[REDACTED]"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := capsule.Boundaries[0].RequestDigest, DigestBytes(canonical); got != want || got == DigestBytes(raw) {
+		t.Fatalf("post-policy request digest = %q, want %q and not raw %q", got, want, DigestBytes(raw))
+	}
+}
+
+func TestBoundaryIgnorePathsUseJSONPointerEscapesAndArrayRemoval(t *testing.T) {
+	value := map[string]any{"a/b": map[string]any{"~secret": "drop", "keep": true}, "items": []any{"zero", "one", "two"}}
+	updated, err := applyBoundaryIgnores(value, []string{"/a~1b/~0secret", "/items/1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := CanonicalJSON(updated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(canonical), `{"a/b":{"keep":true},"items":["zero","two"]}`; got != want {
+		t.Fatalf("ignored request = %s, want %s", got, want)
+	}
+	if _, err := applyBoundaryIgnores(map[string]any{}, []string{"not-a-pointer"}); err == nil {
+		t.Fatal("invalid JSON pointer was accepted")
+	}
+}
+
 func TestAFRCAP003ReferenceMetadataCannotOrphanPolicySafePayload(t *testing.T) {
 	ctx := context.Background()
 	directory := t.TempDir()

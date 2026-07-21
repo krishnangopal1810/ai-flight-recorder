@@ -5,7 +5,6 @@ package security_test
 import (
 	"context"
 	"errors"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -18,43 +17,6 @@ import (
 	"github.com/krishnangopal1810/ai-flight-recorder/internal/types"
 )
 
-func TestAFRT08SeededSecretsNeverReachLocalStore(t *testing.T) {
-	ctx := context.Background()
-	root := t.TempDir()
-	repo, err := repository.OpenLocal(ctx, filepath.Join(root, "flight.db"), filepath.Join(root, "blobs"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer repo.Close()
-	policy, err := service.NewPolicyEngine(config.CapturePolicy{Version: "test", Mode: "strict", MaxFieldSize: 1 << 20, Rules: []config.PolicyRule{{Name: "seed", Path: "*", Pattern: `SEEDED_SECRET_[A-Z0-9]+`, Action: "redact"}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	capsule, err := service.NewCapsuleService(repo, policy).Capture(ctx, service.CaptureRequest{TraceID: strings.Repeat("a", 32), ProjectID: "security", ServiceName: "fixture", Operations: []service.CaptureOperation{{Operation: types.Operation{SpanID: strings.Repeat("b", 16), Name: "root", Kind: "agent", Status: "ok", StartTime: time.Unix(1, 0), EndTime: time.Unix(2, 0)}, Input: []byte(`{"token":"SEEDED_SECRET_123ABC"}`), InputType: "application/json"}}, StartTime: time.Unix(1, 0), EndTime: time.Unix(2, 0)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if capsule.Privacy.Redactions["seed"] == 0 {
-		t.Fatal("manifest did not record redaction")
-	}
-	err = filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
-		if walkErr != nil || info.IsDir() {
-			return walkErr
-		}
-		data, readErr := os.ReadFile(path)
-		if readErr != nil {
-			return readErr
-		}
-		if strings.Contains(string(data), "SEEDED_SECRET_123ABC") {
-			t.Fatalf("seeded secret persisted in %s", path)
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestAFRT09MutatingLiveBoundaryFailsPreflight(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
@@ -66,7 +28,8 @@ func TestAFRT09MutatingLiveBoundaryFailsPreflight(t *testing.T) {
 	policy, _ := service.NewPolicyEngine(config.CapturePolicy{Version: "test", Mode: "strict", MaxFieldSize: 1024})
 	capsules := service.NewCapsuleService(repo, policy)
 	response := []byte(`{"ok":true}`)
-	capsule := types.RunCapsule{SchemaVersion: types.SchemaVersion, TraceID: strings.Repeat("a", 32), ProjectID: "security", ServiceName: "fixture", StartTime: time.Unix(1, 0), EndTime: time.Unix(2, 0), TerminalStatus: "ok", Provenance: types.Provenance{CommitSHA: "abc", Entrypoint: &types.Entrypoint{Command: []string{"agent"}, Image: "sha256:image", InputMode: "stdin_json", OutputMode: "stdout_json"}}, Privacy: types.PrivacySummary{Mode: "strict"}, Operations: []types.Operation{{SpanID: "root", Name: "root", Kind: "agent"}}, Boundaries: []types.Boundary{{ID: "payment", LogicalKey: "payment", SideEffect: "mutating", ReplayPolicy: "live", Response: &types.PayloadRef{Digest: service.DigestBytes(response), State: "captured"}}}}
+	request := &types.PayloadRef{Digest: service.DigestBytes(response), State: types.PayloadStateCaptured}
+	capsule := types.RunCapsule{SchemaVersion: types.SchemaVersion, TraceID: strings.Repeat("a", 32), ProjectID: "security", ServiceName: "fixture", StartTime: time.Unix(1, 0), EndTime: time.Unix(2, 0), TerminalStatus: "ok", Provenance: types.Provenance{CommitSHA: "abc", Entrypoint: &types.Entrypoint{Command: []string{"agent"}, Image: "sha256:image", InputMode: "stdin_json", OutputMode: "stdout_json"}}, Privacy: types.PrivacySummary{Mode: "strict"}, Operations: []types.Operation{{SpanID: "root", Name: "root", Kind: "agent", Input: request}}, Boundaries: []types.Boundary{{ID: "payment", OperationSpanID: "root", LogicalKey: "payment", SideEffect: "mutating", ReplayPolicy: "live", Response: &types.PayloadRef{Digest: service.DigestBytes(response), State: "captured"}}}}
 	service.ComputeCompleteness(&capsule)
 	payloads := map[string][]byte{capsule.Boundaries[0].Response.Digest: response}
 	if err := service.FinalizeCapsule(&capsule, payloads); err != nil {

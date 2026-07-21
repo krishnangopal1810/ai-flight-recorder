@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -189,6 +190,11 @@ func (s *CapsuleService) Capture(ctx context.Context, request CaptureRequest) (t
 		}
 		if captured.Boundary != nil {
 			boundary := *captured.Boundary
+			requestDigest, err := boundaryDigestAfterPolicy(operation.Input, payloads, boundary.MatchingRule.IgnorePaths)
+			if err != nil {
+				return types.RunCapsule{}, err
+			}
+			boundary.RequestDigest = requestDigest
 			occurrenceKey := boundary.ParentLogicalKey + "\x00" + boundary.Class + "\x00" + boundary.LogicalKey
 			boundary.Occurrence = boundaryOccurrences[occurrenceKey]
 			boundaryOccurrences[occurrenceKey]++
@@ -327,6 +333,94 @@ func (s *CapsuleService) capturePayload(name string, raw []byte, mediaType strin
 	}
 	digest := DigestBytes(result.Data)
 	return types.PayloadRef{Digest: digest, MediaType: mediaType, Size: int64(len(result.Data)), State: types.PayloadStateCaptured}, result.Data, result, nil
+}
+
+func boundaryDigestAfterPolicy(ref *types.PayloadRef, payloads map[string][]byte, ignorePaths []string) (string, error) {
+	if ref == nil || ref.State != types.PayloadStateCaptured {
+		return "", nil
+	}
+	data, ok := payloads[ref.Digest]
+	if !ok {
+		return "", types.NewError(types.ErrValidation, "boundary request payload is unavailable", "derive the match digest only from policy-processed request bytes", nil)
+	}
+	mediaType := strings.ToLower(strings.TrimSpace(strings.Split(ref.MediaType, ";")[0]))
+	if mediaType != "application/json" && !strings.HasSuffix(mediaType, "+json") {
+		return ref.Digest, nil
+	}
+	var value any
+	if err := json.Unmarshal(data, &value); err != nil {
+		return "", types.NewError(types.ErrValidation, "policy-safe boundary request is not JSON", "emit valid JSON or use a non-JSON media type", err)
+	}
+	value, err := applyBoundaryIgnores(value, ignorePaths)
+	if err != nil {
+		return "", err
+	}
+	canonical, err := CanonicalJSON(value)
+	if err != nil {
+		return "", err
+	}
+	return DigestBytes(canonical), nil
+}
+
+func applyBoundaryIgnores(value any, pointers []string) (any, error) {
+	for _, pointer := range pointers {
+		if !strings.HasPrefix(pointer, "/") {
+			return nil, types.NewError(types.ErrValidation, "boundary ignore path is not a JSON pointer", "start every ignore path with /", nil)
+		}
+		encoded := strings.Split(strings.TrimPrefix(pointer, "/"), "/")
+		parts := make([]string, len(encoded))
+		for index, part := range encoded {
+			parts[index] = strings.ReplaceAll(strings.ReplaceAll(part, "~1", "/"), "~0", "~")
+		}
+		var err error
+		value, err = removeBoundaryPath(value, parts)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return value, nil
+}
+
+func removeBoundaryPath(value any, parts []string) (any, error) {
+	if len(parts) == 0 {
+		return value, nil
+	}
+	switch current := value.(type) {
+	case map[string]any:
+		child, exists := current[parts[0]]
+		if !exists {
+			return value, nil
+		}
+		if len(parts) == 1 {
+			delete(current, parts[0])
+			return current, nil
+		}
+		updated, err := removeBoundaryPath(child, parts[1:])
+		if err != nil {
+			return nil, err
+		}
+		current[parts[0]] = updated
+		return current, nil
+	case []any:
+		index, err := strconv.Atoi(parts[0])
+		if err != nil {
+			return nil, types.NewError(types.ErrValidation, "boundary ignore path has a non-numeric array index", "use a zero-based integer in JSON array pointers", err)
+		}
+		if index < 0 || index >= len(current) {
+			return current, nil
+		}
+		if len(parts) == 1 {
+			return append(current[:index], current[index+1:]...), nil
+		}
+		updated, err := removeBoundaryPath(current[index], parts[1:])
+		if err != nil {
+			return nil, err
+		}
+		current[index] = updated
+		return current, nil
+	default:
+		return value, nil
+	}
 }
 
 func (s *CapsuleService) captureContent(name string, captured CapturePayload) (*types.PayloadRef, []byte, PolicyResult, error) {

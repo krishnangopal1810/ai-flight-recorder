@@ -130,6 +130,14 @@ Record a capsule with one missing tool response
 flight demo seed-incomplete
 ```
 
+## `flight demo seed-sensitive`
+
+Record policy-redacted evidence and one safe quarantine diagnostic
+
+```text
+flight demo seed-sensitive
+```
+
 ## `flight diff`
 
 Find the first meaningful divergence
