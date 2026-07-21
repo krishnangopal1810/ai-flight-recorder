@@ -180,6 +180,7 @@ type RunCapsule struct {
 	ReplayHistory   []ReplayRecord             `json:"replay_history,omitempty"`
 	Extensions      map[string]json.RawMessage `json:"extensions,omitempty"`
 	UnknownFields   map[string]json.RawMessage `json:"-"`
+	unknownDocument json.RawMessage
 }
 
 type CapsuleSummary struct {

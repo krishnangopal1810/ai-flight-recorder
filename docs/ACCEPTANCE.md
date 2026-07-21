@@ -7,7 +7,7 @@
 | AFR-T01 | `TestAFRT01ThroughT03DiffSurfacesCausalInputDrift/AFR-T01` | Prompt input drift precedes the changed tool choice. |
 | AFR-T02 | `TestAFRT01ThroughT03DiffSurfacesCausalInputDrift/AFR-T02` | Retrieval response drift aligns and remains causal evidence. |
 | AFR-T03 | `TestAFRT01ThroughT03DiffSurfacesCausalInputDrift/AFR-T03` | Tool schema/request drift is surfaced before the tool failure. |
-| AFR-T04 | `scripts/reference-replay-smoke.sh`, `scripts/typescript-reference-smoke.sh`, `TestAFRT04RecordedExternalResponseIsSubstitutedOffline`, bundle E2E | Python and TypeScript recorded responses are substituted; the Python mixed trial permits only the declared model host and both all-substituted trials attach no egress network. |
+| AFR-T04 | `scripts/reference-replay-smoke.sh`, `scripts/typescript-reference-smoke.sh`, `TestAFRT04RecordedExternalResponseIsSubstitutedOffline` | Python and TypeScript recorded responses are substituted; the Python mixed trial permits only the declared model host and both all-substituted trials attach no egress network. |
 | AFR-T05 | `TestAFRT05RepeatedTrialsNeverClaimFalseDeterminism` | Repetitions produce exact, equivalent, divergent, or inconclusive. |
 | AFR-T06 | `TestAFRT06PlaybackSurvivesMissingReplayEvidence` | Playback stays ready while replay names the missing boundary. |
 | AFR-T07 | `TestAFRT07MalformedSpanIsIsolatedFromValidTrace` | A malformed span is rejected without discarding valid trace evidence. |

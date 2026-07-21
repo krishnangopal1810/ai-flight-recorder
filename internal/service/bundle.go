@@ -99,6 +99,9 @@ func (s *BundleService) Import(ctx context.Context, source io.Reader) (types.Run
 			if err := json.Unmarshal(data, &capsule); err != nil {
 				return types.RunCapsule{}, types.NewError(types.ErrValidation, "invalid capsule manifest", "fix the JSON manifest", err)
 			}
+			if err := validateCapsuleSchemaVersion(capsule.SchemaVersion); err != nil {
+				return types.RunCapsule{}, err
+			}
 			manifestSeen = true
 		case strings.HasPrefix(clean, "blobs/sha256/"):
 			hex := strings.TrimPrefix(clean, "blobs/sha256/")
@@ -111,9 +114,6 @@ func (s *BundleService) Import(ctx context.Context, source io.Reader) (types.Run
 	}
 	if !manifestSeen {
 		return types.RunCapsule{}, types.NewError(types.ErrValidation, "bundle manifest is missing", "include manifest.json", nil)
-	}
-	if !strings.HasPrefix(capsule.SchemaVersion, "1.") {
-		return types.RunCapsule{}, types.NewError(types.ErrValidation, "unsupported capsule schema major version", "use a V1-compatible exporter", nil)
 	}
 	if err := VerifyCapsule(capsule, func(digest string) ([]byte, error) {
 		data, ok := payloads[digest]
@@ -128,6 +128,29 @@ func (s *BundleService) Import(ctx context.Context, source io.Reader) (types.Run
 		return types.RunCapsule{}, err
 	}
 	return capsule, nil
+}
+
+func validateCapsuleSchemaVersion(value string) error {
+	parts := strings.Split(value, ".")
+	if len(parts) != 2 || !decimalVersionPart(parts[0]) || !decimalVersionPart(parts[1]) || (len(parts[0]) > 1 && parts[0][0] == '0') {
+		return types.NewError(types.ErrValidation, "invalid capsule schema version", "use major.minor numeric syntax such as 1.0", nil)
+	}
+	if parts[0] != "1" {
+		return types.NewError(types.ErrValidation, "unsupported capsule schema major version", "use a V1-compatible exporter", nil)
+	}
+	return nil
+}
+
+func decimalVersionPart(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, character := range value {
+		if character < '0' || character > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func writeTarFile(writer *tar.Writer, name string, data []byte) error {

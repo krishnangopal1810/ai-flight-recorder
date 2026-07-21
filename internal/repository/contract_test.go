@@ -1,7 +1,9 @@
 package repository
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -27,6 +29,7 @@ func exerciseRepositoryContract(t *testing.T, repo Repository, prefix string) {
 		TerminalStatus: "ok",
 		Completeness:   map[string]types.Completeness{},
 	}
+	capsule = capsuleWithUnknownContractFields(t, capsule)
 	for range 2 {
 		if err := repo.PutCapsule(ctx, capsule, map[string][]byte{digest: payload}); err != nil {
 			t.Fatalf("idempotent capsule write: %v", err)
@@ -35,6 +38,10 @@ func exerciseRepositoryContract(t *testing.T, repo Repository, prefix string) {
 	loaded, err := repo.GetCapsule(ctx, capsule.CapsuleID)
 	if err != nil || loaded.TraceID != capsule.TraceID {
 		t.Fatalf("capsule round trip: %#v %v", loaded, err)
+	}
+	loadedManifest, err := json.Marshal(loaded)
+	if err != nil || !bytes.Contains(loadedManifest, []byte(`"future_contract":"kept"`)) || !bytes.Contains(loadedManifest, []byte(`"future_provenance":"kept"`)) {
+		t.Fatalf("compatible unknown fields did not survive repository round trip: %s %v", loadedManifest, err)
 	}
 	loadedPayload, err := repo.LoadPayload(ctx, digest)
 	if err != nil || string(loadedPayload) != "evidence" {
@@ -74,4 +81,34 @@ func exerciseRepositoryContract(t *testing.T, repo Repository, prefix string) {
 	if err != nil || second != nil {
 		t.Fatalf("duplicate claim: %#v %v", second, err)
 	}
+}
+
+func capsuleWithUnknownContractFields(t *testing.T, capsule types.RunCapsule) types.RunCapsule {
+	t.Helper()
+	manifest, err := json.Marshal(capsule)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]json.RawMessage
+	if err := json.Unmarshal(manifest, &document); err != nil {
+		t.Fatal(err)
+	}
+	document["future_contract"] = json.RawMessage(`"kept"`)
+	var provenance map[string]json.RawMessage
+	if err := json.Unmarshal(document["provenance"], &provenance); err != nil {
+		t.Fatal(err)
+	}
+	provenance["future_provenance"] = json.RawMessage(`"kept"`)
+	document["provenance"], err = json.Marshal(provenance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err = json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(manifest, &capsule); err != nil {
+		t.Fatal(err)
+	}
+	return capsule
 }
