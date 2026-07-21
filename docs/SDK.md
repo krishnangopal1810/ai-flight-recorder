@@ -11,6 +11,7 @@ Equivalent APIs cover run provenance, argv entrypoint registration, artifact att
 | `flight.capture` | Explicit root opt-in. |
 | `flight.project.id` | Project grouping boundary. |
 | `flight.repository.url`, `flight.git.commit`, `flight.git.dirty_digest`, `flight.build.id` | Source and build provenance. |
+| `flight.runtime`, `flight.dependency_lock`, `flight.feature_flags` | Explicit runtime identity plus canonical dependency-lock digests and feature flags. |
 | `flight.entrypoint.command`, `.image`, `.input_mode`, `.output_mode`, `.model_hosts` | Replay entrypoint evidence. |
 | `flight.logical_key` | Stable developer operation identity. |
 | `flight.boundary.logical_key`, `.class`, `.parent_logical_key`, `.request_digest` | Exact boundary identity and aligned parent. |
@@ -29,6 +30,8 @@ Boundary occurrence is counted by aligned parent, boundary class, and logical ke
 The collector consumes the [official OpenInference span-kind taxonomy](https://arize-ai.github.io/openinference/spec/semantic_conventions.html) for agent, LLM, retriever, tool, evaluator, and prompt operations, plus the OTel GenAI operation name where supplied. `flight.operation.kind` provides explicit application kinds such as `mcp` that are not part of the OpenInference taxonomy. The producer's scope or resource schema URL is retained on every logical operation.
 
 Operation input and output values, artifact bytes, and evaluator evidence cross the ordered capture-policy boundary and become content-addressed payload references. Evaluator identity, version, score, and threshold are metadata; evaluator input and evidence reuse the evaluator operation's payload references so content cannot bypass redaction, exclusion, or size limits. Model provider, requested/reported model, invocation parameters, usage, token counts, and cost are associated from the LLM span and retained as policy-processed metadata.
+
+Run provenance accepts standard `container.id` and `process.runtime.*` resource attributes together with the documented `flight.*` metadata. Python `set_run_provenance` and TypeScript `setRunProvenance` emit equivalent canonical dependency-lock and feature-flag maps and may provide an explicit runtime identity. Missing `source_identity`, `commit_sha`, `build_or_container_identity`, `runtime`, `dependency_lock`, `feature_flags`, or `entrypoint` facts are listed in `provenance.missing`; invalid JSON or entrypoint argv is named separately and never guessed into a value. A clean worktree legitimately has no `dirty_digest` and is not labeled missing.
 
 During replay, `FLIGHT_REPLAY_PLAN` points at the read-only envelope and `FLIGHT_WORKSPACE` points at ephemeral writable space. `FLIGHT_REPLAY_MODEL`, when set with `flight replay --model`, is the selected candidate model name. Credentials remain worker configuration and are only passed for environment names declared by `flight.yaml`.
 

@@ -35,6 +35,8 @@ def set_run_provenance(
     commit_sha: str | None = None,
     dirty_digest: str | None = None,
     build_id: str | None = None,
+    runtime: str | None = None,
+    dependency_lock: Mapping[str, str] | None = None,
     feature_flags: Mapping[str, Any] | None = None,
 ) -> None:
     def apply(span: trace.Span) -> None:
@@ -45,12 +47,15 @@ def set_run_provenance(
             "flight.git.commit": commit_sha,
             "flight.git.dirty_digest": dirty_digest,
             "flight.build.id": build_id,
+            "flight.runtime": runtime,
         }
         for key, value in values.items():
             if value is not None:
                 span.set_attribute(key, value)
         if feature_flags is not None:
             span.set_attribute("flight.feature_flags", _canonical(feature_flags))
+        if dependency_lock is not None:
+            span.set_attribute("flight.dependency_lock", _canonical(dependency_lock))
 
     _safe("set_run_provenance", apply)
 
