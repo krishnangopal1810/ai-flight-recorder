@@ -138,12 +138,34 @@ function annotate(options: BoundaryOptions, sideEffect: SideEffect, replayPolicy
     span?.setAttribute("flight.boundary.request_digest", requestDigest);
     span?.setAttribute("flight.boundary.matching_mode", "exact");
     span?.setAttribute("flight.boundary.ignore_paths", JSON.stringify(options.ignorePaths ?? []));
-    span?.setAttribute("flight.input", canonical(request));
+    captureContent(span, "flight.input", request, "capture_boundary_request");
     if (options.sandbox) span?.setAttribute("flight.boundary.sandbox", options.sandbox);
   });
 }
 
-function captureResponse(response: unknown): void { safeMetadata("capture_boundary_response", () => trace.getSpan(context.active())?.setAttribute("flight.output", canonical(response))); }
+function captureResponse(response: unknown): void {
+	safeMetadata("capture_boundary_response", () => captureContent(trace.getSpan(context.active()), "flight.output", response, "capture_boundary_response"));
+}
+
+function captureContent(span: ReturnType<typeof trace.getSpan>, attribute: string, value: unknown, operation: string): void {
+	if (!span) return;
+	try { span.setAttribute(attribute, canonical(value)); }
+	catch (error) {
+		span.setAttribute(`${attribute}.omission.reason`, "serialization_failed");
+		span.setAttribute(`${attribute}.omission.size`, omissionSize(value));
+		span.setAttribute(`${attribute}.omission.media_type`, "application/json");
+		diagnostic(operation, error);
+	}
+}
+
+function omissionSize(value: unknown): number {
+	if (typeof value === "string") return Buffer.byteLength(value);
+	if (value instanceof Uint8Array) return value.byteLength;
+	try {
+		const encoded = JSON.stringify(value);
+		return encoded === undefined ? 0 : Buffer.byteLength(encoded);
+	} catch { return 0; }
+}
 
 function loadPlan(): ReplayFile | undefined {
   const planPath = process.env.FLIGHT_REPLAY_PLAN;

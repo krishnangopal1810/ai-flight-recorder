@@ -82,10 +82,10 @@ func assertFullTraceCapsule(t *testing.T, captured capturedExport) {
 	if captured.response.PartialSuccess != nil {
 		t.Fatalf("unexpected partial success: %#v", captured.response.PartialSuccess)
 	}
-	if len(capsule.Operations) != 7 {
+	if len(capsule.Operations) != 8 {
 		t.Fatalf("operations = %#v", capsule.Operations)
 	}
-	expectedKinds := []string{"agent", "evaluator", "llm", "mcp", "prompt", "retriever", "tool"}
+	expectedKinds := []string{"agent", "api", "evaluator", "llm", "mcp", "prompt", "retriever", "tool"}
 	kinds := make([]string, 0, len(capsule.Operations))
 	operationByKind := map[string]types.Operation{}
 	for _, operation := range capsule.Operations {
@@ -110,10 +110,17 @@ func assertFullTraceCapsule(t *testing.T, captured capturedExport) {
 	if operationByKind["llm"].Attributes["openinference.span.kind"] != "LLM" || operationByKind["llm"].Attributes["gen_ai.operation.name"] != "chat" {
 		t.Fatalf("GenAI/OpenInference metadata was not preserved: %#v", operationByKind["llm"].Attributes)
 	}
-	if capsule.Model.Provider != "openai" || capsule.Model.RequestedModel != "gpt-flight" || capsule.Model.ProviderReportedModel != "gpt-flight-2026-07-21" || capsule.Model.ResponseMetadata["gen_ai.usage.input_tokens"] != "17" {
+	if capsule.Model.Provider != "openai" || capsule.Model.RequestedModel != "gpt-flight" || capsule.Model.ProviderReportedModel != "gpt-flight-2026-07-21" || capsule.Model.ResponseMetadata["gen_ai.usage.input_tokens"] != "17" || capsule.Model.ResponseMetadata["llm.cost.total"] != "0.004" {
 		t.Fatalf("child LLM model configuration was not associated with the capsule: %#v", capsule.Model)
 	}
-	if len(capsule.Boundaries) != 4 {
+	if len(capsule.Model.ToolDefinitions) != 1 || capsule.Model.ToolDefinitions[0].State != types.PayloadStateCaptured {
+		t.Fatalf("tool definitions = %#v", capsule.Model.ToolDefinitions)
+	}
+	toolDefinitions, err := captured.repository.LoadPayload(context.Background(), capsule.Model.ToolDefinitions[0].Digest)
+	if err != nil || !bytes.Contains(toolDefinitions, []byte(`"name":"lookup_policy"`)) {
+		t.Fatalf("tool definition payload = %s %v", toolDefinitions, err)
+	}
+	if len(capsule.Boundaries) != 5 {
 		t.Fatalf("boundaries = %#v", capsule.Boundaries)
 	}
 	if len(capsule.Artifacts) != 1 || capsule.Artifacts[0].State != "captured" || capsule.Artifacts[0].Payload == nil {
@@ -140,7 +147,7 @@ func assertFullTraceCapsule(t *testing.T, captured capturedExport) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, payload := range [][]byte{[]byte("prompt-template-v3"), []byte(`"explanation":"supported"`), []byte(`"documents":[`)} {
+	for _, payload := range [][]byte{[]byte("prompt-template-v3"), []byte(`"explanation":"supported"`), []byte(`"documents":[`), []byte(`"name":"lookup_policy"`)} {
 		if bytes.Contains(manifest, payload) {
 			t.Fatalf("payload bypassed content-addressed storage: fragment=%s manifest=%s", payload, manifest)
 		}
@@ -237,7 +244,7 @@ func fullTraceExport(traceMarker byte) *collectortrace.ExportTraceServiceRequest
 		}
 	}
 	root := &tracev1.Span{
-		TraceId: traceID, SpanId: rootID, Name: "answer", StartTimeUnixNano: uint64(time.Unix(1, 0).UnixNano()), EndTimeUnixNano: uint64(time.Unix(9, 0).UnixNano()), Status: &tracev1.Status{Code: tracev1.Status_STATUS_CODE_OK},
+		TraceId: traceID, SpanId: rootID, Name: "answer", StartTimeUnixNano: uint64(time.Unix(1, 0).UnixNano()), EndTimeUnixNano: uint64(time.Unix(10, 0).UnixNano()), Status: &tracev1.Status{Code: tracev1.Status_STATUS_CODE_OK},
 		Attributes: []*commonv1.KeyValue{
 			stringKV("openinference.span.kind", "AGENT"), stringKV("flight.logical_key", "agent.answer"),
 			stringKV("input.value", `{"question":"policy"}`), stringKV("output.value", `{"answer":"grounded"}`),
@@ -251,7 +258,8 @@ func fullTraceExport(traceMarker byte) *collectortrace.ExportTraceServiceRequest
 	prompt := span(2, "render", "PROMPT", `{"template":"answer {question}"}`, `{"prompt":"answer policy"}`, stringKV("prompt.id", "support-answer"), stringKV("prompt.vendor", "flight-fixture"))
 	retriever := span(3, "documents", "RETRIEVER", `{"query":"policy"}`, `{"documents":[{"id":"policy-v2","content":"grounding"}]}`, boundary("retriever.policy", "retriever")...)
 	llmExtras := append(boundary("llm.answer", "llm"),
-		stringKV("gen_ai.operation.name", "chat"), stringKV("gen_ai.provider.name", "openai"), stringKV("gen_ai.request.model", "gpt-flight"), stringKV("gen_ai.response.model", "gpt-flight-2026-07-21"), intKV("gen_ai.usage.input_tokens", 17), intKV("gen_ai.usage.output_tokens", 5),
+		stringKV("gen_ai.operation.name", "chat"), stringKV("gen_ai.provider.name", "openai"), stringKV("gen_ai.request.model", "gpt-flight"), stringKV("gen_ai.response.model", "gpt-flight-2026-07-21"), intKV("gen_ai.usage.input_tokens", 17), intKV("gen_ai.usage.output_tokens", 5), stringKV("llm.cost.total", "0.004"),
+		stringKV("gen_ai.tool.definitions", `[{"type":"function","name":"lookup_policy","description":"load policy evidence"}]`),
 	)
 	llm := span(4, "completion", "LLM", `{"messages":[{"role":"user","content":"answer policy"}]}`, `{"message":{"role":"assistant","content":"grounded"}}`, llmExtras...)
 	mcp := span(5, "resource-read", "INTERNAL", `{"uri":"policy://refund"}`, `{"text":"grounding"}`, append(boundary("mcp.policy", "mcp"), stringKV("flight.operation.kind", "mcp"))...)
@@ -260,7 +268,9 @@ func fullTraceExport(traceMarker byte) *collectortrace.ExportTraceServiceRequest
 	evaluator := span(7, "faithfulness", "EVALUATOR", `{"answer":"grounded","evidence":"grounding"}`, `{"explanation":"supported"}`,
 		stringKV("flight.evaluation.id", "quality.faithfulness"), stringKV("flight.evaluation.version", "3"), doubleKV("flight.evaluation.score", 0.95), doubleKV("flight.evaluation.threshold", 0.8),
 	)
-	return exportWithSpans(openInferenceSchemaURL, root, prompt, retriever, llm, mcp, tool, evaluator)
+	api := span(8, "entitlement", "INTERNAL", `{"account":"demo"}`, `{"eligible":true}`, append(boundary("api.entitlement", "api"), stringKV("flight.operation.kind", "api"))...)
+	api.Attributes = withoutAttribute(api.Attributes, "openinference.span.kind")
+	return exportWithSpans(openInferenceSchemaURL, root, prompt, retriever, llm, mcp, tool, evaluator, api)
 }
 
 func mixedValidityExport(traceMarker byte) *collectortrace.ExportTraceServiceRequest {

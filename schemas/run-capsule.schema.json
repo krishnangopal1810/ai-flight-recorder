@@ -18,7 +18,7 @@
     "integrity": {"$ref": "#/$defs/integrity"},
     "completeness": {"type": "object", "additionalProperties": {"$ref": "completeness-report.schema.json"}},
     "provenance": {"$ref": "#/$defs/provenance"},
-    "model_configuration": {"type": "object", "additionalProperties": true},
+    "model_configuration": {"$ref": "#/$defs/model_configuration"},
     "artifacts": {"type": "array", "items": {"$ref": "#/$defs/artifact"}},
     "operations": {"type": "array", "items": {"$ref": "#/$defs/operation"}},
     "boundaries": {"type": "array", "items": {"$ref": "boundary.schema.json"}},
@@ -31,14 +31,21 @@
     "digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
     "payload": {
       "type": "object",
-      "required": ["digest", "size"],
+      "required": ["size"],
       "properties": {
         "digest": {"$ref": "#/$defs/digest"},
         "media_type": {"type": "string"},
         "size": {"type": "integer", "minimum": 0},
-        "state": {"type": "string"},
-        "reason": {"type": "string"}
+        "state": {"enum": ["captured", "omitted"]},
+        "reason": {"enum": ["payload_limit", "policy_exclusion", "serialization_failed", "invalid_omission_metadata"]}
       },
+      "allOf": [
+        {
+          "if": {"properties": {"state": {"const": "omitted"}}, "required": ["state"]},
+          "then": {"required": ["reason"]},
+          "else": {"required": ["digest"]}
+        }
+      ],
       "additionalProperties": true
     },
     "integrity": {
@@ -87,6 +94,18 @@
         "environment_facts": {"type": "object", "additionalProperties": {"type": "string"}},
         "entrypoint": {"$ref": "#/$defs/entrypoint"},
         "missing": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": true
+    },
+    "model_configuration": {
+      "type": "object",
+      "properties": {
+        "provider": {"type": "string"},
+        "requested_model": {"type": "string"},
+        "provider_reported_model": {"type": "string"},
+        "parameters": {"type": "object", "additionalProperties": true},
+        "tool_definitions": {"type": "array", "items": {"$ref": "#/$defs/payload"}},
+        "response_metadata": {"type": "object", "additionalProperties": true}
       },
       "additionalProperties": true
     },

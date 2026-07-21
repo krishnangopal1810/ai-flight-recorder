@@ -30,12 +30,26 @@ def test_live_call_without_replay():
     ) == {"temp": 25}
 
 
-def test_metadata_failure_never_fails_production_request(capsys):
+def test_metadata_failure_never_fails_production_request(capsys, monkeypatch):
+    class RecordingSpan:
+        def __init__(self):
+            self.attributes = {}
+
+        def set_attribute(self, key, value):
+            self.attributes[key] = value
+
+    span = RecordingSpan()
+    monkeypatch.setattr(
+        boundary_module.__globals__["trace"], "get_current_span", lambda: span
+    )
     marker = object()
     assert boundary("opaque", marker, lambda: "ok", boundary_class="api") == "ok"
     diagnostic = capsys.readouterr().err
     assert "flight_sdk_metadata" in diagnostic
     assert repr(marker) not in diagnostic
+    assert span.attributes["flight.input.omission.reason"] == "serialization_failed"
+    assert span.attributes["flight.input.omission.size"] == 0
+    assert span.attributes["flight.input.omission.media_type"] == "application/json"
 
 
 def test_substitutes_exact_recorded_boundary(tmp_path, monkeypatch):

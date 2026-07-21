@@ -408,15 +408,17 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
-        payload: {
-            digest: components["schemas"]["digest"];
+        payload: ({
+            digest?: components["schemas"]["digest"];
             media_type?: string;
             size: number;
-            state?: string;
-            reason?: string;
+            /** @enum {unknown} */
+            state?: "captured" | "omitted";
+            /** @enum {unknown} */
+            reason?: "payload_limit" | "policy_exclusion" | "serialization_failed" | "invalid_omission_metadata";
         } & {
             [key: string]: unknown;
-        };
+        }) & unknown;
         integrity: {
             /** @constant */
             algorithm: "sha256+rfc8785";
@@ -445,6 +447,20 @@ export interface components {
             };
             entrypoint?: components["schemas"]["entrypoint"];
             missing?: string[];
+        } & {
+            [key: string]: unknown;
+        };
+        model_configuration: {
+            provider?: string;
+            requested_model?: string;
+            provider_reported_model?: string;
+            parameters?: {
+                [key: string]: unknown;
+            };
+            tool_definitions?: components["schemas"]["payload"][];
+            response_metadata?: {
+                [key: string]: unknown;
+            };
         } & {
             [key: string]: unknown;
         };
@@ -488,15 +504,17 @@ export interface components {
             class: string;
             parent_logical_key?: string;
             request_digest?: string;
-            response?: {
-                digest: string;
+            response?: ({
+                digest?: string;
                 media_type?: string;
                 size: number;
-                state?: string;
-                reason?: string;
+                /** @enum {unknown} */
+                state?: "captured" | "omitted";
+                /** @enum {unknown} */
+                reason?: "payload_limit" | "policy_exclusion" | "serialization_failed" | "invalid_omission_metadata";
             } & {
                 [key: string]: unknown;
-            };
+            }) & unknown;
             /** @enum {unknown} */
             side_effect: "read_only" | "mutating" | "unknown";
             /** @enum {unknown} */
@@ -548,9 +566,7 @@ export interface components {
                 [key: string]: components["schemas"]["completeness-report.schema"];
             };
             provenance: components["schemas"]["provenance"];
-            model_configuration?: {
-                [key: string]: unknown;
-            };
+            model_configuration?: components["schemas"]["model_configuration"];
             artifacts?: components["schemas"]["artifact"][];
             operations: components["schemas"]["operation"][];
             boundaries?: components["schemas"]["boundary.schema"][];
@@ -566,15 +582,17 @@ export interface components {
             };
             $defs: {
                 digest: string;
-                payload: {
-                    digest: components["schemas"]["digest"];
+                payload: ({
+                    digest?: components["schemas"]["digest"];
                     media_type?: string;
                     size: number;
-                    state?: string;
-                    reason?: string;
+                    /** @enum {unknown} */
+                    state?: "captured" | "omitted";
+                    /** @enum {unknown} */
+                    reason?: "payload_limit" | "policy_exclusion" | "serialization_failed" | "invalid_omission_metadata";
                 } & {
                     [key: string]: unknown;
-                };
+                }) & unknown;
                 integrity: {
                     /** @constant */
                     algorithm: "sha256+rfc8785";
@@ -624,6 +642,20 @@ export interface components {
                     };
                     entrypoint?: components["schemas"]["entrypoint"];
                     missing?: string[];
+                } & {
+                    [key: string]: unknown;
+                };
+                model_configuration: {
+                    provider?: string;
+                    requested_model?: string;
+                    provider_reported_model?: string;
+                    parameters?: {
+                        [key: string]: unknown;
+                    };
+                    tool_definitions?: components["schemas"]["payload"][];
+                    response_metadata?: {
+                        [key: string]: unknown;
+                    };
                 } & {
                     [key: string]: unknown;
                 };
