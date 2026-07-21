@@ -12,6 +12,7 @@ test("live worktree stack exposes seeded playback and divergence evidence", asyn
 	await expect(capsules).toHaveCount(2);
 	await capsules.first().click();
 	await expect(page.getByRole("tree", {name: "Logical execution tree"})).toContainText("answer-policy");
+	await expect(page.getByRole("group", {name: "replay completeness"})).toContainText("ready");
 	await page.getByLabel("Candidate capsule").selectOption({index: 1});
 	await expect(page.getByRole("region", {name: "First divergence"})).toContainText("Observation");
 	const path = testInfo.outputPath("dom.html");

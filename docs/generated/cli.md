@@ -26,6 +26,14 @@ List, inspect, import, and export Run Capsules
 flight capsule
 ```
 
+## `flight capsule completeness`
+
+Report playback, replay, diff, and bisect prerequisites
+
+```text
+flight capsule completeness <capsule-id>
+```
+
 ## `flight capsule export`
 
 Export a portable capsule bundle
@@ -112,6 +120,14 @@ Record baseline and divergent demo capsules
 
 ```text
 flight demo seed
+```
+
+## `flight demo seed-incomplete`
+
+Record a capsule with one missing tool response
+
+```text
+flight demo seed-incomplete
 ```
 
 ## `flight diff`

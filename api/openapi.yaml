@@ -19,6 +19,12 @@ paths:
       parameters: [{$ref: '#/components/parameters/CapsuleID'}]
       responses:
         '200': {description: Verified capsule, content: {application/json: {schema: {$ref: '#/components/schemas/RunCapsule'}}}}
+  /capsules/{id}/completeness:
+    get:
+      operationId: getCapsuleCompleteness
+      parameters: [{$ref: '#/components/parameters/CapsuleID'}]
+      responses:
+        '200': {description: Independent playback, replay, diff, and bisect prerequisite report, content: {application/json: {schema: {$ref: '#/components/schemas/CapsuleCompleteness'}}}}
   /capsules/{id}/playback:
     get:
       operationId: playbackCapsule
@@ -132,6 +138,7 @@ components:
     TokenID: {name: id, in: path, required: true, schema: {type: string, format: uuid}}
   schemas:
     RunCapsule: {$ref: '../schemas/run-capsule.schema.json'}
+    CapsuleCompleteness: {$ref: '../schemas/capsule-completeness.schema.json'}
     ReplayPlan: {$ref: '../schemas/replay-plan.schema.json'}
     Evaluator: {$ref: '../schemas/evaluator.schema.json'}
     Diff: {$ref: '../schemas/diff.schema.json'}

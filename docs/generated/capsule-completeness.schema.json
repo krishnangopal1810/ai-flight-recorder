@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-flight-recorder.dev/schemas/capsule-completeness-1.0.json",
+  "title": "Capsule Completeness",
+  "type": "object",
+  "required": ["schema_version", "capsule_id", "playback", "replay", "diff", "bisect"],
+  "properties": {
+    "schema_version": {"type": "string", "pattern": "^1\\.[0-9]+$"},
+    "capsule_id": {"type": "string"},
+    "playback": {"$ref": "completeness-report.schema.json"},
+    "replay": {"$ref": "completeness-report.schema.json"},
+    "diff": {"$ref": "completeness-report.schema.json"},
+    "bisect": {"$ref": "completeness-report.schema.json"}
+  },
+  "additionalProperties": true
+}

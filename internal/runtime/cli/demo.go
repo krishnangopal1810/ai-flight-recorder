@@ -11,6 +11,8 @@ import (
 	commonv1 "go.opentelemetry.io/proto/otlp/common/v1"
 	resourcev1 "go.opentelemetry.io/proto/otlp/resource/v1"
 	tracev1 "go.opentelemetry.io/proto/otlp/trace/v1"
+
+	"github.com/krishnangopal1810/ai-flight-recorder/internal/types"
 )
 
 func newDemo(options *rootOptions) *cobra.Command {
@@ -36,7 +38,27 @@ func newDemo(options *rootOptions) *cobra.Command {
 		}
 		return writeOutput(os.Stdout, map[string]any{"seeded": ids, "route": "/capsules/" + firstID(ids)}, options.json)
 	}}
-	command.AddCommand(seed)
+	incomplete := &cobra.Command{Use: "seed-incomplete", Short: "Record a capsule with one missing tool response", RunE: func(_ *cobra.Command, _ []string) error {
+		client, err := apiClient(options)
+		if err != nil {
+			return err
+		}
+		capsules, err := client.IngestOTLP(context.Background(), demoTrace(3, "incomplete"))
+		if err != nil {
+			return err
+		}
+		ids := make([]string, 0, len(capsules))
+		for _, capsule := range capsules {
+			if capsule.ServiceName == "incomplete-agent" {
+				ids = append(ids, capsule.CapsuleID)
+			}
+		}
+		if len(ids) != 1 {
+			return types.NewError(types.ErrValidation, "incomplete demo fixture identity is ambiguous", "tear down this worktree stack and reseed deterministic demo data", nil)
+		}
+		return writeOutput(os.Stdout, map[string]any{"seeded": ids, "route": "/capsules/" + firstID(ids)}, options.json)
+	}}
+	command.AddCommand(seed, incomplete)
 	return command
 }
 
@@ -50,9 +72,17 @@ func demoTrace(suffix byte, variant string) *collectortrace.ExportTraceServiceRe
 	if variant == "candidate" {
 		prompt, tool = "Answer from memory", "email.send"
 	}
-	resource := &resourcev1.Resource{Attributes: []*commonv1.KeyValue{demoString("service.name", "policy-agent"), demoString("flight.project.id", "demo"), demoBool("flight.capture", true)}}
+	serviceName := "policy-agent"
+	if variant == "incomplete" {
+		serviceName = "incomplete-agent"
+	}
+	resource := &resourcev1.Resource{Attributes: []*commonv1.KeyValue{demoString("service.name", serviceName), demoString("flight.project.id", "demo"), demoBool("flight.capture", true)}}
 	root := &tracev1.Span{TraceId: traceID, SpanId: rootID, Name: "answer-policy", StartTimeUnixNano: uint64(start.UnixNano()), EndTimeUnixNano: uint64(start.Add(2 * time.Second).UnixNano()), Status: &tracev1.Status{Code: tracev1.Status_STATUS_CODE_OK}, Attributes: []*commonv1.KeyValue{demoString("openinference.span.kind", "AGENT"), demoString("flight.logical_key", "agent.answer"), demoString("input.value", fmt.Sprintf(`{"prompt":%q}`, prompt)), demoString("output.value", `{"answer":"policy result"}`), demoString("flight.git.commit", "demo-"+variant), demoString("flight.entrypoint.command", `["/agent"]`), demoString("flight.entrypoint.image", "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")}}
-	toolSpan := &tracev1.Span{TraceId: traceID, SpanId: toolID, ParentSpanId: rootID, Name: tool, StartTimeUnixNano: uint64(start.Add(time.Second).UnixNano()), EndTimeUnixNano: uint64(start.Add(1500 * time.Millisecond).UnixNano()), Status: &tracev1.Status{Code: tracev1.Status_STATUS_CODE_OK}, Attributes: []*commonv1.KeyValue{demoString("openinference.span.kind", "TOOL"), demoString("flight.logical_key", "tool.policy"), demoString("flight.boundary.logical_key", "tool.policy"), demoString("flight.boundary.class", "tool"), demoString("flight.boundary.side_effect", "read_only"), demoString("flight.boundary.replay_policy", "substitute"), demoString("flight.boundary.request_digest", "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"), demoString("input.value", `{"policy_id":"refund"}`), demoString("output.value", `{"rule":"refunds within 30 days"}`)}}
+	toolAttributes := []*commonv1.KeyValue{demoString("openinference.span.kind", "TOOL"), demoString("flight.logical_key", "tool.policy"), demoString("flight.boundary.logical_key", "tool.policy"), demoString("flight.boundary.class", "tool"), demoString("flight.boundary.side_effect", "read_only"), demoString("flight.boundary.replay_policy", "substitute"), demoString("flight.boundary.request_digest", "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"), demoString("input.value", `{"policy_id":"refund"}`)}
+	if variant != "incomplete" {
+		toolAttributes = append(toolAttributes, demoString("output.value", `{"rule":"refunds within 30 days"}`))
+	}
+	toolSpan := &tracev1.Span{TraceId: traceID, SpanId: toolID, ParentSpanId: rootID, Name: tool, StartTimeUnixNano: uint64(start.Add(time.Second).UnixNano()), EndTimeUnixNano: uint64(start.Add(1500 * time.Millisecond).UnixNano()), Status: &tracev1.Status{Code: tracev1.Status_STATUS_CODE_OK}, Attributes: toolAttributes}
 	return &collectortrace.ExportTraceServiceRequest{
 		ResourceSpans: []*tracev1.ResourceSpans{
 			{

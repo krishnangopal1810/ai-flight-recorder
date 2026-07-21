@@ -27,12 +27,28 @@ const (
 )
 
 type Completeness struct {
-	State       CompletenessState `json:"state"`
-	Missing     []MissingItem     `json:"missing,omitempty"`
-	Ambiguities []string          `json:"ambiguities,omitempty"`
+	State            CompletenessState `json:"state"`
+	Missing          []MissingItem     `json:"missing,omitempty"`
+	Ambiguities      []string          `json:"ambiguities,omitempty"`
+	AmbiguityDetails []AmbiguityItem   `json:"ambiguity_details,omitempty"`
+}
+
+type CapsuleCompleteness struct {
+	SchemaVersion string       `json:"schema_version"`
+	CapsuleID     string       `json:"capsule_id"`
+	Playback      Completeness `json:"playback"`
+	Replay        Completeness `json:"replay"`
+	Diff          Completeness `json:"diff"`
+	Bisect        Completeness `json:"bisect"`
 }
 
 type MissingItem struct {
+	Code       string `json:"code"`
+	BoundaryID string `json:"boundary_id,omitempty"`
+	Message    string `json:"message"`
+}
+
+type AmbiguityItem struct {
 	Code       string `json:"code"`
 	BoundaryID string `json:"boundary_id,omitempty"`
 	Message    string `json:"message"`

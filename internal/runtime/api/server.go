@@ -53,6 +53,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /metrics", s.metrics)
 	mux.HandleFunc("GET /api/v1/capsules", s.withScope("read", s.listCapsules))
 	mux.HandleFunc("GET /api/v1/capsules/{id}", s.withScope("read", s.getCapsule))
+	mux.HandleFunc("GET /api/v1/capsules/{id}/completeness", s.withScope("read", s.getCompleteness))
 	mux.HandleFunc("GET /api/v1/capsules/{id}/playback", s.withScope("read", s.playback))
 	mux.HandleFunc("GET /api/v1/capsules/{id}/payloads/{digest}", s.withScope("read", s.getPayload))
 	mux.HandleFunc("GET /api/v1/capsules/{id}/export", s.withScope("read", s.exportCapsule))
@@ -71,9 +72,39 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/audit-events", s.withScope("admin", s.auditEvents))
 	mux.HandleFunc("POST /v1/traces", s.withScope("ingest", s.otlpHTTP))
 	if info, err := os.Stat(s.config.Server.WebDir); err == nil && info.IsDir() {
-		mux.Handle("/", http.FileServer(http.Dir(s.config.Server.WebDir)))
+		mux.Handle("/", inspectorHandler(s.config.Server.WebDir))
 	}
 	return s.recoverMiddleware(s.loggingMiddleware(mux))
+}
+
+func inspectorHandler(directory string) http.Handler {
+	files := http.FileServer(http.Dir(directory))
+	index := filepath.Join(directory, "index.html")
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/api" || request.URL.Path == "/v1" || strings.HasPrefix(request.URL.Path, "/api/") || strings.HasPrefix(request.URL.Path, "/v1/") {
+			http.NotFound(writer, request)
+			return
+		}
+		if request.Method != http.MethodGet && request.Method != http.MethodHead {
+			http.NotFound(writer, request)
+			return
+		}
+		relative := filepath.Clean(filepath.FromSlash(strings.TrimPrefix(request.URL.Path, "/")))
+		if relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			http.NotFound(writer, request)
+			return
+		}
+		candidate := filepath.Join(directory, relative)
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			files.ServeHTTP(writer, request)
+			return
+		}
+		if relative != "." && filepath.Ext(relative) != "" {
+			http.NotFound(writer, request)
+			return
+		}
+		http.ServeFile(writer, request, index)
+	})
 }
 
 func (s *Server) health(writer http.ResponseWriter, _ *http.Request) {
@@ -101,6 +132,15 @@ func (s *Server) getCapsule(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	writeJSON(writer, http.StatusOK, capsule)
+}
+
+func (s *Server) getCompleteness(writer http.ResponseWriter, request *http.Request) {
+	report, err := s.capsules.Completeness(request.Context(), request.PathValue("id"))
+	if err != nil {
+		writeError(writer, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, report)
 }
 
 func (s *Server) playback(writer http.ResponseWriter, request *http.Request) {
