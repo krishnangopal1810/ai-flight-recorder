@@ -436,13 +436,14 @@ export interface components {
             digest?: components["schemas"]["digest"];
             media_type?: string;
             size: number;
+            original_size?: number;
             /** @enum {unknown} */
             state?: "captured" | "omitted";
             /** @enum {unknown} */
-            reason?: "payload_limit" | "policy_exclusion" | "serialization_failed" | "invalid_omission_metadata";
+            reason?: "payload_limit" | "policy_exclusion" | "serialization_failed" | "invalid_omission_metadata" | "payload_truncated";
         } & {
             [key: string]: unknown;
-        }) & unknown;
+        }) & (unknown & unknown);
         integrity: {
             /** @constant */
             algorithm: "sha256+rfc8785";
@@ -532,13 +533,14 @@ export interface components {
                 digest?: string;
                 media_type?: string;
                 size: number;
+                original_size?: number;
                 /** @enum {unknown} */
                 state?: "captured" | "omitted";
                 /** @enum {unknown} */
-                reason?: "payload_limit" | "policy_exclusion" | "serialization_failed" | "invalid_omission_metadata";
+                reason?: "payload_limit" | "policy_exclusion" | "serialization_failed" | "invalid_omission_metadata" | "payload_truncated";
             } & {
                 [key: string]: unknown;
-            }) & unknown;
+            }) & (unknown & unknown);
             /** @enum {unknown} */
             side_effect: "read_only" | "mutating" | "unknown";
             /** @enum {unknown} */
@@ -564,6 +566,9 @@ export interface components {
                 [key: string]: number;
             };
             exclusions?: {
+                [key: string]: number;
+            };
+            truncations?: {
                 [key: string]: number;
             };
             export_policy?: string;
@@ -610,13 +615,14 @@ export interface components {
                     digest?: components["schemas"]["digest"];
                     media_type?: string;
                     size: number;
+                    original_size?: number;
                     /** @enum {unknown} */
                     state?: "captured" | "omitted";
                     /** @enum {unknown} */
-                    reason?: "payload_limit" | "policy_exclusion" | "serialization_failed" | "invalid_omission_metadata";
+                    reason?: "payload_limit" | "policy_exclusion" | "serialization_failed" | "invalid_omission_metadata" | "payload_truncated";
                 } & {
                     [key: string]: unknown;
-                }) & unknown;
+                }) & (unknown & unknown);
                 integrity: {
                     /** @constant */
                     algorithm: "sha256+rfc8785";
@@ -724,6 +730,9 @@ export interface components {
                         [key: string]: number;
                     };
                     exclusions?: {
+                        [key: string]: number;
+                    };
+                    truncations?: {
                         [key: string]: number;
                     };
                     export_policy?: string;

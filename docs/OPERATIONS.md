@@ -16,6 +16,26 @@ Startup fails when any non-loopback listener lacks explicit authentication and n
 
 `flight --url <https-url> --token <token> record -- <command>` supplies the selected token to Flight SDKs and to standard OTLP exporters through a URL-encoded `Authorization` header. For direct OTLP/gRPC producers, send the same `authorization: Bearer <token>` metadata and trust the native or proxy certificate chain.
 
+## Retention and payload limits
+
+`policy.default_retention` sets the capsule lifetime and `policy.project_retention` overrides it by exact project ID; a zero duration is an explicit indefinite hold. The service evaluates expiry immediately at startup and every `server.retention_interval` (default `1h`, or `FLIGHT_RETENTION_INTERVAL`). Expiry removes the manifest and decrements its references transactionally. Unreferenced blobs are then removed conservatively; a failed accounting check or blob operation retains the affected data and emits `retention evaluation failed` with a safe error code and affected capsule count. Successful deletions create one `retention_delete` audit event containing only capsule, reference, and per-project counts.
+
+`policy.max_field_size` remains the default omit limit. Ordered `policy.payload_limits` can override operation input, operation output, tool-definition, or artifact payloads; the first exact field/class match wins. `keep` is an explicit exemption and has no `max_bytes`; `omit` records a typed omission; `truncate` requires at least 64 bytes, stores a bounded policy-safe prefix (a valid JSON marker for JSON payloads), records `original_size` plus `payload_truncated`, and marks affected playback/diff incomplete and replay/bisect blocked where exact evidence is required. Artifact rules match the exact declared `artifact_class`.
+
+```yaml
+server:
+  retention_interval: 15m
+policy:
+  default_retention: 720h
+  project_retention:
+    incident-hot: 168h
+    legal-hold: 0s
+  payload_limits:
+    - {name: omit-large-tools, field: model_configuration.tool_definitions, max_bytes: 262144, action: omit}
+    - {name: truncate-transcripts, field: artifacts, artifact_class: transcript, max_bytes: 1048576, action: truncate}
+    - {name: keep-results, field: operations.output, action: keep}
+```
+
 The coordinator needs access to the selected Docker or Podman engine. Replayed application containers never receive that socket; they run non-root, capability-free, read-only except for declared tmpfs scratch space, resource-limited, and on an internal network whose only peer is the Flight gateway. The operator selects the trusted gateway with `FLIGHT_GATEWAY_IMAGE`; replay API clients cannot replace it. Set `FLIGHT_OCI_EGRESS_NETWORK` to an existing engine network where declared model and sandbox hosts resolve. The gateway joins that network only when the immutable plan has live allowed hosts; an all-substituted replay remains on its private internal network.
 
 Compose mounts `/var/run/docker.sock` by default because bind sources are resolved on the engine host (including a Colima VM), not at the local client context path. Set `FLIGHT_DOCKER_SOCKET` only when a rootless or remote daemon exposes a different path on that daemon host.

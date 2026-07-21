@@ -1,12 +1,14 @@
 package service
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"path"
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/krishnangopal1810/ai-flight-recorder/internal/config"
 	"github.com/krishnangopal1810/ai-flight-recorder/internal/types"
@@ -23,11 +25,14 @@ type PolicyEngine struct {
 }
 
 type PolicyResult struct {
-	Data       []byte
-	Redactions map[string]int
-	Exclusions map[string]int
-	Omitted    bool
-	Reason     string
+	Data         []byte
+	Redactions   map[string]int
+	Exclusions   map[string]int
+	Truncations  map[string]int
+	Omitted      bool
+	Truncated    bool
+	OriginalSize int
+	Reason       string
 }
 
 func (p *PolicyEngine) Retention(project string) time.Duration {
@@ -38,6 +43,9 @@ func (p *PolicyEngine) Retention(project string) time.Duration {
 }
 
 func NewPolicyEngine(policy config.CapturePolicy) (*PolicyEngine, error) {
+	if err := policy.Validate(); err != nil {
+		return nil, err
+	}
 	engine := &PolicyEngine{policy: policy}
 	for _, rule := range policy.Rules {
 		compiled := compiledRule{PolicyRule: rule}
@@ -57,14 +65,45 @@ func NewPolicyEngine(policy config.CapturePolicy) (*PolicyEngine, error) {
 }
 
 func (p *PolicyEngine) ApplyJSON(name string, data []byte) (PolicyResult, error) {
-	result := PolicyResult{Redactions: map[string]int{}, Exclusions: map[string]int{}}
-	if p.policy.MaxFieldSize > 0 && len(data) > p.policy.MaxFieldSize {
+	limit := config.PayloadLimit{Name: "max_field_size", MaxBytes: p.policy.MaxFieldSize, Action: "omit"}
+	return p.apply(name, data, limit, true)
+}
+
+func (p *PolicyEngine) ApplyPayload(field, artifactClass, mediaType string, data []byte) (PolicyResult, error) {
+	limit := config.PayloadLimit{Name: "max_field_size", MaxBytes: p.policy.MaxFieldSize, Action: "omit"}
+	for _, candidate := range p.policy.PayloadLimits {
+		if candidate.Field == field && (candidate.ArtifactClass == "" || candidate.ArtifactClass == artifactClass) {
+			limit = candidate
+			break
+		}
+	}
+	return p.apply(field, data, limit, isJSONMediaType(mediaType))
+}
+
+func isJSONMediaType(mediaType string) bool {
+	mediaType = strings.ToLower(strings.TrimSpace(strings.Split(mediaType, ";")[0]))
+	return mediaType == "application/json" || strings.HasSuffix(mediaType, "+json")
+}
+
+func (p *PolicyEngine) apply(name string, data []byte, limit config.PayloadLimit, structured bool) (PolicyResult, error) {
+	result := newPolicyResult()
+	result.OriginalSize = len(data)
+	if limit.Action == "omit" && limit.MaxBytes > 0 && len(data) > limit.MaxBytes {
 		result.Omitted, result.Reason = true, "payload_limit"
 		return result, nil
 	}
 	var value any
 	if err := json.Unmarshal(data, &value); err != nil {
-		return p.applyScalar(name, string(data))
+		updated, excluded, ruleErr := p.applyRules(name, string(data), &result)
+		if ruleErr != nil {
+			return PolicyResult{}, ruleErr
+		}
+		if excluded {
+			result.Omitted, result.Reason = true, "policy_exclusion"
+			return result, nil
+		}
+		result.Data = []byte(updated)
+		return applyPayloadLimit(result, limit, structured)
 	}
 	sanitized, excluded, err := p.walk(name, value, &result)
 	if err != nil {
@@ -79,21 +118,56 @@ func (p *PolicyEngine) ApplyJSON(name string, data []byte) (PolicyResult, error)
 		return PolicyResult{}, types.NewError(types.ErrValidation, "cannot serialize policy-safe payload", "omit the unsupported value or encode it as JSON", err)
 	}
 	result.Data = encoded
+	return applyPayloadLimit(result, limit, structured)
+}
+
+func newPolicyResult() PolicyResult {
+	return PolicyResult{Redactions: map[string]int{}, Exclusions: map[string]int{}, Truncations: map[string]int{}}
+}
+
+func applyPayloadLimit(result PolicyResult, limit config.PayloadLimit, structured bool) (PolicyResult, error) {
+	if limit.Action == "keep" || limit.MaxBytes <= 0 || len(result.Data) <= limit.MaxBytes {
+		return result, nil
+	}
+	if limit.Action == "omit" {
+		result.Data, result.Omitted, result.Reason = nil, true, "payload_limit"
+		return result, nil
+	}
+	truncated, ok := truncatePolicyData(result.Data, limit.MaxBytes, structured)
+	if !ok {
+		result.Data, result.Omitted, result.Reason = nil, true, "payload_limit"
+		return result, nil
+	}
+	result.Data, result.Truncated, result.Reason = truncated, true, types.PayloadTruncated
+	result.Truncations[limit.Name]++
 	return result, nil
 }
 
-func (p *PolicyEngine) applyScalar(name, value string) (PolicyResult, error) {
-	result := PolicyResult{Redactions: map[string]int{}, Exclusions: map[string]int{}}
-	updated, excluded, err := p.applyRules(name, value, &result)
-	if err != nil {
-		return PolicyResult{}, err
+func truncatePolicyData(data []byte, maximum int, structured bool) ([]byte, bool) {
+	if !structured {
+		end := min(maximum, len(data))
+		if utf8.Valid(data) {
+			for end > 0 && !utf8.Valid(data[:end]) {
+				end--
+			}
+		}
+		return append([]byte(nil), data[:end]...), true
 	}
-	if excluded {
-		result.Omitted, result.Reason = true, "policy_exclusion"
-		return result, nil
+	encode := func(size int) []byte {
+		marker, _ := json.Marshal(map[string]string{"_flight_truncated_prefix_base64": base64.RawStdEncoding.EncodeToString(data[:size])})
+		return marker
 	}
-	result.Data = []byte(updated)
-	return result, nil
+	low, high := 0, len(data)
+	for low < high {
+		middle := (low + high + 1) / 2
+		if len(encode(middle)) <= maximum {
+			low = middle
+		} else {
+			high = middle - 1
+		}
+	}
+	encoded := encode(low)
+	return encoded, len(encoded) <= maximum
 }
 
 func (p *PolicyEngine) walk(current string, value any, result *PolicyResult) (any, bool, error) {
@@ -146,7 +220,7 @@ func (p *PolicyEngine) applyRules(current, value string, result *PolicyResult) (
 		}
 		switch rule.Action {
 		case "keep":
-			continue
+			return updated, false, nil
 		case "exclude":
 			result.Exclusions[rule.Name]++
 			return "", true, nil
@@ -167,8 +241,10 @@ func (p *PolicyEngine) applyRules(current, value string, result *PolicyResult) (
 				limit = 256
 			}
 			if len(updated) > limit {
-				updated = updated[:limit]
-				result.Redactions[rule.Name]++
+				truncated, _ := truncatePolicyData([]byte(updated), limit, false)
+				updated = string(truncated)
+				result.Truncated, result.Reason = true, types.PayloadTruncated
+				result.Truncations[rule.Name]++
 			}
 		}
 	}

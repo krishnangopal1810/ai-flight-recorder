@@ -36,14 +36,19 @@
         "digest": {"$ref": "#/$defs/digest"},
         "media_type": {"type": "string"},
         "size": {"type": "integer", "minimum": 0},
+        "original_size": {"type": "integer", "minimum": 0},
         "state": {"enum": ["captured", "omitted"]},
-        "reason": {"enum": ["payload_limit", "policy_exclusion", "serialization_failed", "invalid_omission_metadata"]}
+        "reason": {"enum": ["payload_limit", "policy_exclusion", "serialization_failed", "invalid_omission_metadata", "payload_truncated"]}
       },
       "allOf": [
         {
           "if": {"properties": {"state": {"const": "omitted"}}, "required": ["state"]},
           "then": {"required": ["reason"]},
           "else": {"required": ["digest"]}
+        },
+        {
+          "if": {"properties": {"reason": {"const": "payload_truncated"}}, "required": ["reason"]},
+          "then": {"required": ["original_size"]}
         }
       ],
       "additionalProperties": true
@@ -152,6 +157,7 @@
         "mode": {"enum": ["strict", "permissive"]},
         "redactions": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
         "exclusions": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
+        "truncations": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
         "export_policy": {"type": "string"}
       },
       "additionalProperties": true

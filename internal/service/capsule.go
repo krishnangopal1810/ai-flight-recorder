@@ -73,7 +73,7 @@ func (s *CapsuleService) Capture(ctx context.Context, request CaptureRequest) (t
 	capsule := types.RunCapsule{
 		SchemaVersion: types.SchemaVersion, TraceID: request.TraceID, SourceCapsuleID: request.SourceCapsuleID,
 		StartTime: request.StartTime, EndTime: request.EndTime, TerminalStatus: request.TerminalStatus,
-		Privacy: types.PrivacySummary{Mode: s.policy.policy.Mode, PolicyVersion: s.policy.policy.Version, Redactions: map[string]int{}, Exclusions: map[string]int{}, ExportPolicy: "allowed"},
+		Privacy: types.PrivacySummary{Mode: s.policy.policy.Mode, PolicyVersion: s.policy.policy.Version, Redactions: map[string]int{}, Exclusions: map[string]int{}, Truncations: map[string]int{}, ExportPolicy: "allowed"},
 	}
 	payloads := map[string][]byte{}
 	if result, err := s.sanitizeValue("project_id", request.ProjectID, &capsule.ProjectID); err != nil {
@@ -114,7 +114,7 @@ func (s *CapsuleService) Capture(ctx context.Context, request CaptureRequest) (t
 	}
 	sort.Slice(capsule.Model.ToolDefinitions, func(i, j int) bool {
 		left, right := capsule.Model.ToolDefinitions[i], capsule.Model.ToolDefinitions[j]
-		return fmt.Sprintf("%s\x00%s\x00%s\x00%d\x00%s", left.Digest, left.State, left.Reason, left.Size, left.MediaType) < fmt.Sprintf("%s\x00%s\x00%s\x00%d\x00%s", right.Digest, right.State, right.Reason, right.Size, right.MediaType)
+		return fmt.Sprintf("%s\x00%s\x00%s\x00%d\x00%d\x00%s", left.Digest, left.State, left.Reason, left.Size, left.OriginalSize, left.MediaType) < fmt.Sprintf("%s\x00%s\x00%s\x00%d\x00%d\x00%s", right.Digest, right.State, right.Reason, right.Size, right.OriginalSize, right.MediaType)
 	})
 	if capsule.StartTime.IsZero() {
 		capsule.StartTime = s.clock()
@@ -221,7 +221,7 @@ func (s *CapsuleService) Capture(ctx context.Context, request CaptureRequest) (t
 		declaredPayload := artifact.Payload
 		artifact.Payload = nil
 		if captured.Data != nil || declaredPayload != nil {
-			ref, data, result, err := s.captureContent("artifacts."+artifact.LogicalName, CapturePayload{Data: captured.Data, MediaType: artifact.MediaType, Omission: declaredPayload})
+			ref, data, result, err := s.captureContentClass("artifacts", artifact.Type, CapturePayload{Data: captured.Data, MediaType: artifact.MediaType, Omission: declaredPayload})
 			if err != nil {
 				return types.RunCapsule{}, s.policyFailure(ctx, request, err)
 			}
@@ -320,11 +320,11 @@ func (s *CapsuleService) QuarantineDiagnostic(ctx context.Context, reason, trace
 	return s.repository.PutQuarantine(ctx, repository.QuarantineRecord{ID: uuid.NewString(), Reason: reason, Safe: map[string]any{"trace_id_hash": DigestBytes([]byte(traceID)), "operation_count": operationCount}, CreatedAt: s.clock()})
 }
 
-func (s *CapsuleService) capturePayload(name string, raw []byte, mediaType string) (types.PayloadRef, []byte, PolicyResult, error) {
-	if strings.HasPrefix(strings.ToLower(mediaType), "application/json") && !json.Valid(raw) {
+func (s *CapsuleService) capturePayload(name, artifactClass string, raw []byte, mediaType string) (types.PayloadRef, []byte, PolicyResult, error) {
+	if isJSONMediaType(mediaType) && !json.Valid(raw) {
 		return types.PayloadRef{MediaType: mediaType, Size: int64(len(raw)), State: types.PayloadStateOmitted, Reason: types.OmissionSerialization}, nil, PolicyResult{}, nil
 	}
-	result, err := s.policy.ApplyJSON(name, raw)
+	result, err := s.policy.ApplyPayload(name, artifactClass, mediaType, raw)
 	if err != nil {
 		return types.PayloadRef{}, nil, PolicyResult{}, err
 	}
@@ -332,7 +332,11 @@ func (s *CapsuleService) capturePayload(name string, raw []byte, mediaType strin
 		return types.PayloadRef{MediaType: mediaType, Size: int64(len(raw)), State: types.PayloadStateOmitted, Reason: result.Reason}, nil, result, nil
 	}
 	digest := DigestBytes(result.Data)
-	return types.PayloadRef{Digest: digest, MediaType: mediaType, Size: int64(len(result.Data)), State: types.PayloadStateCaptured}, result.Data, result, nil
+	ref := types.PayloadRef{Digest: digest, MediaType: mediaType, Size: int64(len(result.Data)), State: types.PayloadStateCaptured}
+	if result.Truncated {
+		ref.OriginalSize, ref.Reason = int64(result.OriginalSize), types.PayloadTruncated
+	}
+	return ref, result.Data, result, nil
 }
 
 func boundaryDigestAfterPolicy(ref *types.PayloadRef, payloads map[string][]byte, ignorePaths []string) (string, error) {
@@ -424,11 +428,15 @@ func removeBoundaryPath(value any, parts []string) (any, error) {
 }
 
 func (s *CapsuleService) captureContent(name string, captured CapturePayload) (*types.PayloadRef, []byte, PolicyResult, error) {
+	return s.captureContentClass(name, "", captured)
+}
+
+func (s *CapsuleService) captureContentClass(name, artifactClass string, captured CapturePayload) (*types.PayloadRef, []byte, PolicyResult, error) {
 	if captured.Data != nil && captured.Omission != nil {
 		return nil, nil, PolicyResult{}, types.NewError(types.ErrValidation, "captured content has both bytes and an omission", "emit either policy-processable bytes or one typed omission", nil)
 	}
 	if captured.Data != nil {
-		ref, data, result, err := s.capturePayload(name, captured.Data, captured.MediaType)
+		ref, data, result, err := s.capturePayload(name, artifactClass, captured.Data, captured.MediaType)
 		return &ref, data, result, err
 	}
 	if captured.Omission == nil {
@@ -494,6 +502,9 @@ func mergePolicySummary(summary *types.PrivacySummary, result PolicyResult) {
 	}
 	for name, count := range result.Exclusions {
 		summary.Exclusions[name] += count
+	}
+	for name, count := range result.Truncations {
+		summary.Truncations[name] += count
 	}
 }
 

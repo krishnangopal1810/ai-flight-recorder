@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -36,13 +37,14 @@ type AuthConfig struct {
 }
 
 type ServerConfig struct {
-	HTTPAddress     string        `yaml:"http_address"`
-	OTLPHTTPAddress string        `yaml:"otlp_http_address"`
-	OTLPGRPCAddress string        `yaml:"otlp_grpc_address"`
-	WebDir          string        `yaml:"web_dir"`
-	TLSCert         string        `yaml:"tls_cert"`
-	TLSKey          string        `yaml:"tls_key"`
-	LateSpanGrace   time.Duration `yaml:"late_span_grace"`
+	HTTPAddress       string        `yaml:"http_address"`
+	OTLPHTTPAddress   string        `yaml:"otlp_http_address"`
+	OTLPGRPCAddress   string        `yaml:"otlp_grpc_address"`
+	WebDir            string        `yaml:"web_dir"`
+	TLSCert           string        `yaml:"tls_cert"`
+	TLSKey            string        `yaml:"tls_key"`
+	LateSpanGrace     time.Duration `yaml:"late_span_grace"`
+	RetentionInterval time.Duration `yaml:"retention_interval"`
 }
 
 type PolicyRule struct {
@@ -58,9 +60,18 @@ type CapturePolicy struct {
 	Version          string                   `yaml:"version"`
 	Mode             string                   `yaml:"mode"`
 	MaxFieldSize     int                      `yaml:"max_field_size"`
+	PayloadLimits    []PayloadLimit           `yaml:"payload_limits,omitempty"`
 	DefaultRetention time.Duration            `yaml:"default_retention"`
 	ProjectRetention map[string]time.Duration `yaml:"project_retention,omitempty"`
 	Rules            []PolicyRule             `yaml:"rules"`
+}
+
+type PayloadLimit struct {
+	Name          string `yaml:"name"`
+	Field         string `yaml:"field"`
+	ArtifactClass string `yaml:"artifact_class,omitempty"`
+	MaxBytes      int    `yaml:"max_bytes,omitempty"`
+	Action        string `yaml:"action"`
 }
 
 type Config struct {
@@ -89,7 +100,7 @@ func Default(dataDir string) Config {
 	return Config{
 		Server: ServerConfig{
 			HTTPAddress: "127.0.0.1:7777", OTLPHTTPAddress: "127.0.0.1:4318",
-			OTLPGRPCAddress: "127.0.0.1:4317", WebDir: "web/dist", LateSpanGrace: 30 * time.Second,
+			OTLPGRPCAddress: "127.0.0.1:4317", WebDir: "web/dist", LateSpanGrace: 30 * time.Second, RetentionInterval: time.Hour,
 		},
 		Storage: StorageConfig{
 			Driver: "sqlite", SQLitePath: filepath.Join(dataDir, "flight.db"), BlobPath: filepath.Join(dataDir, "blobs"),
@@ -171,19 +182,14 @@ func (c Config) Validate() error {
 	if c.Storage.Driver == "postgres" && (c.Storage.PostgresURL == "" || c.Storage.S3Endpoint == "" || c.Storage.S3Bucket == "") {
 		return types.NewError(types.ErrValidation, "hosted storage configuration is incomplete", "set PostgreSQL URL, S3 endpoint, and S3 bucket", nil)
 	}
-	if c.Policy.Mode != "strict" && c.Policy.Mode != "permissive" {
-		return types.NewError(types.ErrValidation, "invalid policy mode", "use strict or permissive", nil)
-	}
-	if c.Policy.MaxFieldSize <= 0 || c.Policy.DefaultRetention < 0 {
-		return types.NewError(types.ErrValidation, "capture limits are invalid", "set a positive max_field_size and a non-negative retention", nil)
+	if err := c.Policy.Validate(); err != nil {
+		return err
 	}
 	if c.Server.LateSpanGrace < 0 {
 		return types.NewError(types.ErrValidation, "late-span grace is invalid", "set a non-negative duration such as 500ms or 30s", nil)
 	}
-	for project, retention := range c.Policy.ProjectRetention {
-		if project == "" || retention < 0 {
-			return types.NewError(types.ErrValidation, "project retention is invalid", "use non-empty project IDs and non-negative durations", nil)
-		}
+	if c.Server.RetentionInterval <= 0 {
+		return types.NewError(types.ErrValidation, "retention interval is invalid", "set a positive duration such as 1m or 1h", nil)
 	}
 	if (c.Server.TLSCert == "") != (c.Server.TLSKey == "") {
 		return types.NewError(types.ErrValidation, "TLS certificate and key must be configured together", "set both tls_cert and tls_key", nil)
@@ -199,6 +205,55 @@ func (c Config) Validate() error {
 	shared := !allLoopback(c.Server.HTTPAddress, c.Server.OTLPHTTPAddress, c.Server.OTLPGRPCAddress)
 	if shared && c.Server.TLSCert == "" && !c.Auth.BehindTLSProxy && !c.Auth.InsecureDevelopment {
 		return types.NewError(types.ErrValidation, "remote listeners require transport security", "configure tls_cert/tls_key or set behind_tls_proxy when a trusted reverse proxy terminates TLS", nil)
+	}
+	return nil
+}
+
+func (p CapturePolicy) Validate() error {
+	if p.Mode != "strict" && p.Mode != "permissive" {
+		return types.NewError(types.ErrValidation, "invalid policy mode", "use strict or permissive", nil)
+	}
+	if p.MaxFieldSize <= 0 || p.DefaultRetention < 0 {
+		return types.NewError(types.ErrValidation, "capture limits are invalid", "set a positive max_field_size and a non-negative retention", nil)
+	}
+	for project, retention := range p.ProjectRetention {
+		if project == "" || retention < 0 {
+			return types.NewError(types.ErrValidation, "project retention is invalid", "use non-empty project IDs and non-negative durations", nil)
+		}
+	}
+	allowedFields := map[string]bool{"model_configuration.tool_definitions": true, "operations.input": true, "operations.output": true, "artifacts": true}
+	for _, limit := range p.PayloadLimits {
+		if limit.Name == "" || !allowedFields[limit.Field] {
+			return types.NewError(types.ErrValidation, "invalid payload limit identity", "set a name and use model_configuration.tool_definitions, operations.input, operations.output, or artifacts", nil)
+		}
+		if limit.Field != "artifacts" && limit.ArtifactClass != "" {
+			return types.NewError(types.ErrValidation, "artifact class is only valid for artifact limits", "remove artifact_class or set field: artifacts", nil)
+		}
+		if limit.Action != "keep" && limit.Action != "omit" && limit.Action != "truncate" {
+			return types.NewError(types.ErrValidation, "invalid payload limit action", "use keep, omit, or truncate", nil)
+		}
+		if (limit.Action == "keep" && limit.MaxBytes != 0) || (limit.Action != "keep" && limit.MaxBytes <= 0) {
+			return types.NewError(types.ErrValidation, "invalid payload limit size", "omit and truncate require positive max_bytes; keep must omit max_bytes", nil)
+		}
+		if limit.Action == "truncate" && limit.MaxBytes < 64 {
+			return types.NewError(types.ErrValidation, "truncate payload limit is too small", "set max_bytes to at least 64 so structured truncation remains valid JSON", nil)
+		}
+	}
+	for _, rule := range p.Rules {
+		if rule.Name == "" || rule.Path == "" {
+			return types.NewError(types.ErrValidation, "capture policy rule identity is required", "give every rule a stable audit name and path", nil)
+		}
+		if _, err := path.Match(rule.Path, ""); err != nil {
+			return types.NewError(types.ErrValidation, "invalid capture policy path", "fix rule "+rule.Name, err)
+		}
+		if rule.Pattern != "" {
+			if _, err := regexp.Compile(rule.Pattern); err != nil {
+				return types.NewError(types.ErrValidation, "invalid capture policy pattern", "fix rule "+rule.Name, err)
+			}
+		}
+		if rule.Action != "keep" && rule.Action != "redact" && rule.Action != "exclude" && rule.Action != "truncate" {
+			return types.NewError(types.ErrValidation, "invalid capture policy action", "use keep, redact, exclude, or truncate", nil)
+		}
 	}
 	return nil
 }
@@ -222,6 +277,14 @@ func applyEnvironment(c *Config) {
 			c.Server.LateSpanGrace = -1
 		} else {
 			c.Server.LateSpanGrace = parsed
+		}
+	}
+	if value := os.Getenv("FLIGHT_RETENTION_INTERVAL"); value != "" {
+		parsed, err := time.ParseDuration(value)
+		if err != nil {
+			c.Server.RetentionInterval = 0
+		} else {
+			c.Server.RetentionInterval = parsed
 		}
 	}
 	if value := os.Getenv("FLIGHT_DATABASE_URL"); value != "" {
