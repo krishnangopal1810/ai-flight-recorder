@@ -9,10 +9,12 @@ Production telemetry is hostile input. Replay source code and evaluator containe
 - Ordered policy enforcement precedes all durable writes and observability.
 - Boundary match identity is derived from the policy-processed canonical request, never from an untrusted producer's pre-policy digest.
 - Strict-mode failures retain only policy-safe diagnostic metadata.
-- Local mode binds loopback. Shared mode requires TLS and scoped bearer tokens.
+- Local mode binds every listener to loopback by default. Shared mode requires a random bootstrap token plus native TLS or a source-CIDR-restricted TLS proxy; HTTP and OTLP/gRPC enforce the same scoped bearer contract.
 - Replays run with the controls in the replay-isolation design document.
 - Only the trusted gateway may join the operator-selected OCI egress network, and only for plans containing declared live hosts; the untrusted application remains on its private internal network.
 - Unknown and mutating boundaries are substituted or blocked unless a sandbox and explicit flag are present.
 - Secrets are allowlisted per replay and never included in capsule manifests or logs.
 
 The blocking AFR-T08 contract sends deterministic API-key, token, password, email-PII, exclusion, and strict-failure fixtures through capture policy. It scans SQLite/filesystem and PostgreSQL/S3-compatible stores, searchable identity rows, decompressed bundles, quarantine, returned diagnostics, structured service logs, and metrics for every seed. The live Compose proof is `scripts/privacy-smoke.sh`; backend-neutral security tests apply the same capture contract directly to both repositories. V1 emits local structured logs and Prometheus metrics but configures no outbound product-telemetry exporter; adding one requires an equivalent fail-closed allowlist and sink scan.
+
+The AFR-SEC-003 contract starts the real service on non-loopback listeners with native TLS and with a terminating TLS proxy. It rejects cleartext, missing tokens, wrong scopes, untrusted proxy peers, spoofed forwarded-protocol headers, and direct proxy-backend HTTP. It exercises API, metrics, OTLP/HTTP, and OTLP/gRPC; the hosted variant uses PostgreSQL and S3-compatible storage when the contract services are available. Local repository tests require `0600` database/blob files and a `0700` blob root. `scripts/access-smoke.sh` retains the live rejection bodies and the TLS journey output.

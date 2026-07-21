@@ -152,6 +152,7 @@ failure_classification="product_defect"
 
 run_step completeness ./scripts/completeness-smoke.sh "$artifact_root/completeness"
 run_step privacy ./scripts/privacy-smoke.sh "$artifact_root/privacy"
+run_step access ./scripts/access-smoke.sh "$artifact_root/access"
 
 run_step reference-replay ./scripts/reference-replay-smoke.sh "$artifact_root/reference-replay"
 run_step typescript-reference ./scripts/typescript-reference-smoke.sh \

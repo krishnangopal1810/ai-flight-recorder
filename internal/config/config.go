@@ -28,9 +28,11 @@ type StorageConfig struct {
 }
 
 type AuthConfig struct {
-	LocalBypass    bool   `yaml:"local_bypass"`
-	BehindTLSProxy bool   `yaml:"behind_tls_proxy"`
-	BootstrapToken string `yaml:"bootstrap_token"`
+	LocalBypass         bool     `yaml:"local_bypass"`
+	BehindTLSProxy      bool     `yaml:"behind_tls_proxy"`
+	TrustedProxyCIDRs   []string `yaml:"trusted_proxy_cidrs,omitempty"`
+	InsecureDevelopment bool     `yaml:"insecure_development"`
+	BootstrapToken      string   `yaml:"bootstrap_token"`
 }
 
 type ServerConfig struct {
@@ -153,7 +155,7 @@ func (c Config) Validate() error {
 		if err != nil {
 			return types.NewError(types.ErrValidation, fmt.Sprintf("invalid %s address", name), "use host:port", err)
 		}
-		if c.Auth.LocalBypass && !isLoopback(host) {
+		if c.Auth.LocalBypass && !isLoopback(host) && !c.Auth.InsecureDevelopment {
 			return types.NewError(types.ErrValidation, "authentication bypass requires loopback binding", "bind every listener to 127.0.0.1/::1 or disable local_bypass", nil)
 		}
 	}
@@ -186,7 +188,16 @@ func (c Config) Validate() error {
 	if (c.Server.TLSCert == "") != (c.Server.TLSKey == "") {
 		return types.NewError(types.ErrValidation, "TLS certificate and key must be configured together", "set both tls_cert and tls_key", nil)
 	}
-	if !allLoopback(c.Server.HTTPAddress, c.Server.OTLPHTTPAddress, c.Server.OTLPGRPCAddress) && c.Server.TLSCert == "" && !c.Auth.BehindTLSProxy {
+	if c.Auth.BehindTLSProxy && len(c.Auth.TrustedProxyCIDRs) == 0 {
+		return types.NewError(types.ErrValidation, "TLS proxy mode requires trusted proxy networks", "set trusted_proxy_cidrs or FLIGHT_TRUSTED_PROXY_CIDRS to the proxy source CIDRs", nil)
+	}
+	for _, network := range c.Auth.TrustedProxyCIDRs {
+		if _, _, err := net.ParseCIDR(network); err != nil {
+			return types.NewError(types.ErrValidation, "trusted proxy network is invalid", "use an IP CIDR such as 10.0.0.4/32 or 2001:db8::/64", err)
+		}
+	}
+	shared := !allLoopback(c.Server.HTTPAddress, c.Server.OTLPHTTPAddress, c.Server.OTLPGRPCAddress)
+	if shared && c.Server.TLSCert == "" && !c.Auth.BehindTLSProxy && !c.Auth.InsecureDevelopment {
 		return types.NewError(types.ErrValidation, "remote listeners require transport security", "configure tls_cert/tls_key or set behind_tls_proxy when a trusted reverse proxy terminates TLS", nil)
 	}
 	return nil
@@ -240,8 +251,20 @@ func applyEnvironment(c *Config) {
 	if value := os.Getenv("FLIGHT_BEHIND_TLS_PROXY"); value != "" {
 		c.Auth.BehindTLSProxy, _ = strconv.ParseBool(value)
 	}
+	if value := os.Getenv("FLIGHT_TRUSTED_PROXY_CIDRS"); value != "" {
+		c.Auth.TrustedProxyCIDRs = splitNonEmpty(value)
+	}
+	if value := os.Getenv("FLIGHT_INSECURE_DEVELOPMENT"); value != "" {
+		c.Auth.InsecureDevelopment, _ = strconv.ParseBool(value)
+	}
 	if value := os.Getenv("FLIGHT_BOOTSTRAP_TOKEN"); value != "" {
 		c.Auth.BootstrapToken = value
+	}
+	if value := os.Getenv("FLIGHT_TLS_CERT"); value != "" {
+		c.Server.TLSCert = value
+	}
+	if value := os.Getenv("FLIGHT_TLS_KEY"); value != "" {
+		c.Server.TLSKey = value
 	}
 	if value := os.Getenv("FLIGHT_OCI_RUNTIME"); value != "" {
 		c.Runtime.OCIBinary = value
@@ -291,4 +314,32 @@ func allLoopback(addresses ...string) bool {
 		}
 	}
 	return true
+}
+
+func (a AuthConfig) TrustsProxy(remoteAddress string) bool {
+	host, _, err := net.SplitHostPort(remoteAddress)
+	if err != nil {
+		host = strings.Trim(remoteAddress, "[]")
+	}
+	address := net.ParseIP(host)
+	if address == nil {
+		return false
+	}
+	for _, value := range a.TrustedProxyCIDRs {
+		_, network, err := net.ParseCIDR(value)
+		if err == nil && network.Contains(address) {
+			return true
+		}
+	}
+	return false
+}
+
+func splitNonEmpty(value string) []string {
+	items := []string{}
+	for _, item := range strings.Split(value, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			items = append(items, item)
+		}
+	}
+	return items
 }

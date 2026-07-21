@@ -6,11 +6,15 @@
 
 `make harness-check` creates a second temporary Git worktree containing the current source state, proves that its identifiers do not collide with the caller, bootstraps dependencies, runs tests, starts and seeds the complete stack, exercises metrics/capsule/trace queries plus CLI playback and diff, runs real Python and TypeScript reference-agent replays, runs the inspector against live data, and tears everything down. The replay journeys record standard OTLP, compare equivalent cross-language logical capsules, execute both registered JSON-stdin entrypoints under OCI isolation, verify exact substituted candidates, consume terminal job evidence, and prove unmatched or incomplete metadata fails without an undeclared live fallback. Every run retains `status.json` with a failure classification, exact reproduction instructions, step logs, replay plans/jobs/capsules/diffs, safe SDK diagnostics, Compose diagnostics, DOM attachments, traces, screenshots, and video under `.artifacts/harness/`. Registry-dependent image builds are bounded so a stalled pull produces actionable evidence instead of hanging an agent indefinitely.
 
-The Compose stack is for local development. Its fixed bootstrap token and credentials are not production secrets, every published port is loopback-only, and `FLIGHT_BEHIND_TLS_PROXY=true` models a trusted TLS-terminating proxy.
+The Compose stack is for local development. Its fixed bootstrap token and credentials are not production secrets, every published port is loopback-only, and `FLIGHT_INSECURE_DEVELOPMENT=true` makes the otherwise-invalid cleartext container listeners explicit. The API and both OTLP transports still require the scoped bootstrap token. Never use this override on a shared network.
 
 ## Single-tenant hosted service
 
-Set PostgreSQL and S3-compatible storage through `FLIGHT_DATABASE_URL`, `FLIGHT_S3_ENDPOINT`, `FLIGHT_S3_BUCKET`, `FLIGHT_S3_ACCESS_KEY`, and `FLIGHT_S3_SECRET_KEY`. Disable local bypass, configure native `FLIGHT_TLS_CERT`/`FLIGHT_TLS_KEY` or a trusted TLS reverse proxy, and provide a random 256-bit bootstrap token. Replay credentials use `FLIGHT_REPLAY_CREDENTIAL_<NAME>` and are released only when `flight.yaml` declares the exact environment name.
+Set PostgreSQL and S3-compatible storage through `FLIGHT_DATABASE_URL`, `FLIGHT_S3_ENDPOINT`, `FLIGHT_S3_BUCKET`, `FLIGHT_S3_ACCESS_KEY`, and `FLIGHT_S3_SECRET_KEY`. Disable local bypass and provide a random 256-bit bootstrap token (`frt_` plus 32 unpadded base64url bytes). For native TLS, set `FLIGHT_TLS_CERT` and `FLIGHT_TLS_KEY`; the identity protects the API, OTLP/HTTP, and OTLP/gRPC listeners. For proxy termination, set `FLIGHT_BEHIND_TLS_PROXY=true` and `FLIGHT_TRUSTED_PROXY_CIDRS` to the proxy source networks. The HTTP proxy must overwrite `X-Forwarded-Proto` with `https`; the HTTP and gRPC upstreams must originate from those networks, and the raw upstream ports must not be publicly routable. Health is unauthenticated but transport-checked; metrics require `admin`. Replay credentials use `FLIGHT_REPLAY_CREDENTIAL_<NAME>` and are released only when `flight.yaml` declares the exact environment name.
+
+Startup fails when any non-loopback listener lacks explicit authentication and native or trusted-proxy transport. `FLIGHT_INSECURE_DEVELOPMENT=true` is the sole override and emits a structured warning. Local SQLite files and blobs are restricted to the service account; hosted encryption at rest is supplied and enforced by the configured PostgreSQL and S3-compatible services.
+
+`flight --url <https-url> --token <token> record -- <command>` supplies the selected token to Flight SDKs and to standard OTLP exporters through a URL-encoded `Authorization` header. For direct OTLP/gRPC producers, send the same `authorization: Bearer <token>` metadata and trust the native or proxy certificate chain.
 
 The coordinator needs access to the selected Docker or Podman engine. Replayed application containers never receive that socket; they run non-root, capability-free, read-only except for declared tmpfs scratch space, resource-limited, and on an internal network whose only peer is the Flight gateway. The operator selects the trusted gateway with `FLIGHT_GATEWAY_IMAGE`; replay API clients cannot replace it. Set `FLIGHT_OCI_EGRESS_NETWORK` to an existing engine network where declared model and sandbox hosts resolve. The gateway joins that network only when the immutable plan has live allowed hosts; an all-substituted replay remains on its private internal network.
 
@@ -21,7 +25,7 @@ Replay does not bind client-local temporary paths into containers. The immutable
 ## Health and diagnosis
 
 - `GET /healthz` proves the HTTP process is responsive.
-- `GET /metrics` exposes payload-free counters.
+- Authenticated `GET /metrics` with `admin` scope exposes payload-free counters.
 - `flight capsule list --json` verifies authenticated repository reads.
 - `flight job <id> --json` and `/api/v1/jobs/<id>/events` expose durable progress and remediation-oriented errors.
 - Logs are one JSON object per line and contain identifiers, states, durations, and error categories—never capsule payloads.

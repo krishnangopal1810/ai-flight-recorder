@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -17,6 +18,7 @@ import (
 	"github.com/krishnangopal1810/ai-flight-recorder/internal/config"
 	"github.com/krishnangopal1810/ai-flight-recorder/internal/providers/oci"
 	"github.com/krishnangopal1810/ai-flight-recorder/internal/repository"
+	"github.com/krishnangopal1810/ai-flight-recorder/internal/runtime/access"
 	"github.com/krishnangopal1810/ai-flight-recorder/internal/runtime/api"
 	"github.com/krishnangopal1810/ai-flight-recorder/internal/runtime/otlp"
 	"github.com/krishnangopal1810/ai-flight-recorder/internal/service"
@@ -83,13 +85,17 @@ func (a *Application) Serve(ctx context.Context) error {
 	if err != nil {
 		return types.NewError(types.ErrStorage, "cannot bind OTLP gRPC listener", "choose an available loopback address or stop the conflicting process", err)
 	}
-	grpcOptions := []grpc.ServerOption{grpc.MaxRecvMsgSize(64 << 20)}
+	grpcOptions := []grpc.ServerOption{
+		grpc.MaxRecvMsgSize(64 << 20),
+		grpc.UnaryInterceptor(access.UnaryServerInterceptor(a.Config, a.Auth)),
+	}
 	if a.Config.Server.TLSCert != "" {
-		transport, err := credentials.NewServerTLSFromFile(a.Config.Server.TLSCert, a.Config.Server.TLSKey)
+		identity, err := tls.LoadX509KeyPair(a.Config.Server.TLSCert, a.Config.Server.TLSKey)
 		if err != nil {
 			_ = grpcListener.Close()
 			return types.NewError(types.ErrValidation, "cannot load OTLP gRPC TLS identity", "check tls_cert and tls_key PEM files", err)
 		}
+		transport := credentials.NewTLS(&tls.Config{Certificates: []tls.Certificate{identity}, MinVersion: tls.VersionTLS12})
 		grpcOptions = append(grpcOptions, grpc.Creds(transport))
 	}
 	grpcServer := grpc.NewServer(grpcOptions...)
@@ -114,6 +120,9 @@ func (a *Application) Serve(ctx context.Context) error {
 		go func() {
 			errorsCh <- api.ListenAndServe(ctx, a.Config.Server.OTLPHTTPAddress, a.Config.Server.TLSCert, a.Config.Server.TLSKey, a.API.Handler())
 		}()
+	}
+	if a.Config.Auth.InsecureDevelopment {
+		a.Logger.Warn("insecure development transport override enabled", "local_bypass", a.Config.Auth.LocalBypass)
 	}
 	a.Logger.Info("flight recorder started", "http_address", a.Config.Server.HTTPAddress, "otlp_http_address", a.Config.Server.OTLPHTTPAddress, "otlp_grpc_address", a.Config.Server.OTLPGRPCAddress, "storage", fmt.Sprint(a.Repository))
 	select {

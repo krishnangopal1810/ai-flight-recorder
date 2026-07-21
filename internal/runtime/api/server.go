@@ -3,6 +3,7 @@ package api
 import (
 	"compress/gzip"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,6 +24,7 @@ import (
 
 	"github.com/krishnangopal1810/ai-flight-recorder/internal/config"
 	"github.com/krishnangopal1810/ai-flight-recorder/internal/providers/otlpjson"
+	"github.com/krishnangopal1810/ai-flight-recorder/internal/runtime/access"
 	"github.com/krishnangopal1810/ai-flight-recorder/internal/runtime/otlp"
 	"github.com/krishnangopal1810/ai-flight-recorder/internal/service"
 	"github.com/krishnangopal1810/ai-flight-recorder/internal/types"
@@ -50,7 +52,7 @@ func NewServer(cfg config.Config, capsules *service.CapsuleService, bundles *ser
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.health)
-	mux.HandleFunc("GET /metrics", s.metrics)
+	mux.HandleFunc("GET /metrics", s.withScope("admin", s.metrics))
 	mux.HandleFunc("GET /api/v1/capsules", s.withScope("read", s.listCapsules))
 	mux.HandleFunc("GET /api/v1/capsules/{id}", s.withScope("read", s.getCapsule))
 	mux.HandleFunc("GET /api/v1/capsules/{id}/completeness", s.withScope("read", s.getCompleteness))
@@ -74,7 +76,7 @@ func (s *Server) Handler() http.Handler {
 	if info, err := os.Stat(s.config.Server.WebDir); err == nil && info.IsDir() {
 		mux.Handle("/", inspectorHandler(s.config.Server.WebDir))
 	}
-	return s.recoverMiddleware(s.loggingMiddleware(mux))
+	return s.recoverMiddleware(s.loggingMiddleware(s.transportMiddleware(mux)))
 }
 
 func inspectorHandler(directory string) http.Handler {
@@ -456,13 +458,22 @@ func (s *Server) withScope(scope string, next http.HandlerFunc) http.HandlerFunc
 			next(writer, request)
 			return
 		}
-		value := strings.TrimSpace(strings.TrimPrefix(request.Header.Get("Authorization"), "Bearer "))
-		if err := s.auth.Authorize(request.Context(), value, scope); err != nil {
+		if err := access.Authorize(request.Context(), s.auth, request.Header.Values("Authorization"), scope); err != nil {
 			writeError(writer, err)
 			return
 		}
 		next(writer, request)
 	}
+}
+
+func (s *Server) transportMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if err := access.RequireHTTPTransport(s.config, request); err != nil {
+			writeError(writer, err)
+			return
+		}
+		next.ServeHTTP(writer, request)
+	})
 }
 
 func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
@@ -550,7 +561,7 @@ func countSpans(request *collectortrace.ExportTraceServiceRequest) int {
 }
 
 func ListenAndServe(ctx context.Context, address, cert, key string, handler http.Handler) error {
-	server := &http.Server{Addr: address, Handler: handler, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 70 * time.Second, WriteTimeout: 70 * time.Second, IdleTimeout: 2 * time.Minute}
+	server := &http.Server{Addr: address, Handler: handler, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12}, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 70 * time.Second, WriteTimeout: 70 * time.Second, IdleTimeout: 2 * time.Minute}
 	errCh := make(chan error, 1)
 	go func() {
 		if cert != "" {

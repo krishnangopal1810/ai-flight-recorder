@@ -107,7 +107,7 @@ func newRecord(options *rootOptions) *cobra.Command {
 		}
 		child := exec.Command(args[0], args[1:]...)
 		child.Stdin, child.Stdout, child.Stderr = os.Stdin, os.Stdout, os.Stderr
-		child.Env = append(os.Environ(), "FLIGHT_CAPTURE=true", "OTEL_EXPORTER_OTLP_ENDPOINT="+options.url)
+		child.Env = recordEnvironment(os.Environ(), options.url, options.token)
 		if err := child.Run(); err != nil {
 			var exit *exec.ExitError
 			if errors.As(err, &exit) {
@@ -118,6 +118,42 @@ func newRecord(options *rootOptions) *cobra.Command {
 		return nil
 	}
 	return command
+}
+
+func recordEnvironment(base []string, endpoint, token string) []string {
+	replaced := map[string]bool{"FLIGHT_CAPTURE": true, "OTEL_EXPORTER_OTLP_ENDPOINT": true}
+	if token != "" {
+		replaced["FLIGHT_OTLP_TOKEN"] = true
+		replaced["OTEL_EXPORTER_OTLP_HEADERS"] = true
+	}
+	environment := make([]string, 0, len(base)+4)
+	existingHeaders := ""
+	for _, entry := range base {
+		name, value, found := strings.Cut(entry, "=")
+		if token != "" && name == "OTEL_EXPORTER_OTLP_HEADERS" {
+			existingHeaders = value
+		}
+		if !found || !replaced[name] {
+			environment = append(environment, entry)
+		}
+	}
+	environment = append(environment, "FLIGHT_CAPTURE=true", "OTEL_EXPORTER_OTLP_ENDPOINT="+endpoint)
+	if token != "" {
+		environment = append(environment, "FLIGHT_OTLP_TOKEN="+token, "OTEL_EXPORTER_OTLP_HEADERS="+mergeOTLPAuthorization(existingHeaders, token))
+	}
+	return environment
+}
+
+func mergeOTLPAuthorization(headers, token string) string {
+	kept := make([]string, 0)
+	for _, header := range strings.Split(headers, ",") {
+		name, _, found := strings.Cut(strings.TrimSpace(header), "=")
+		if found && !strings.EqualFold(strings.TrimSpace(name), "authorization") {
+			kept = append(kept, strings.TrimSpace(header))
+		}
+	}
+	kept = append(kept, "authorization=Bearer%20"+token)
+	return strings.Join(kept, ",")
 }
 
 func newCapsule(options *rootOptions) *cobra.Command {

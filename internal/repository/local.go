@@ -29,6 +29,9 @@ func OpenLocal(ctx context.Context, databasePath, blobPath string) (*LocalReposi
 	if err := os.MkdirAll(blobPath, 0o700); err != nil {
 		return nil, types.NewError(types.ErrStorage, "cannot create blob directory", "check the configured blob path permissions", err)
 	}
+	if err := prepareLocalStorage(databasePath, blobPath); err != nil {
+		return nil, err
+	}
 	db, err := sql.Open("sqlite", databasePath)
 	if err != nil {
 		return nil, types.NewError(types.ErrStorage, "cannot open SQLite database", "check the database path", err)
@@ -40,6 +43,10 @@ func OpenLocal(ctx context.Context, databasePath, blobPath string) (*LocalReposi
 		return nil, types.NewError(types.ErrStorage, "cannot configure SQLite database", "verify the SQLite runtime and data directory", err)
 	}
 	if err := repository.migrate(ctx); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := secureLocalStorage(databasePath, blobPath); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -200,6 +207,9 @@ func (r *LocalRepository) writeBlob(digest string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(filename), 0o700); err != nil {
 		return types.NewError(types.ErrStorage, "cannot create payload directory", "check blob directory permissions", err)
 	}
+	if err := os.Chmod(filepath.Dir(filename), 0o700); err != nil {
+		return types.NewError(types.ErrStorage, "cannot restrict payload directory permissions", "grant the service ownership of the configured blob path", err)
+	}
 	temp, err := os.CreateTemp(filepath.Dir(filename), ".flight-blob-*")
 	if err != nil {
 		return types.NewError(types.ErrStorage, "cannot stage payload", "check blob directory permissions", err)
@@ -233,6 +243,36 @@ func (r *LocalRepository) blobFilename(digest string) string {
 		return filepath.Join(r.blobPath, "invalid")
 	}
 	return filepath.Join(r.blobPath, "sha256", hex[:2], hex[2:])
+}
+
+func secureLocalStorage(databasePath, blobPath string) error {
+	if err := os.Chmod(blobPath, 0o700); err != nil {
+		return types.NewError(types.ErrStorage, "cannot restrict blob directory permissions", "grant the service ownership of the configured blob path", err)
+	}
+	for _, path := range []string{databasePath, databasePath + "-wal", databasePath + "-shm"} {
+		if err := os.Chmod(path, 0o600); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return types.NewError(types.ErrStorage, "cannot restrict database file permissions", "grant the service ownership of the configured SQLite files", err)
+		}
+	}
+	return nil
+}
+
+func prepareLocalStorage(databasePath, blobPath string) error {
+	if err := os.Chmod(blobPath, 0o700); err != nil {
+		return types.NewError(types.ErrStorage, "cannot restrict blob directory permissions", "grant the service ownership of the configured blob path", err)
+	}
+	database, err := os.OpenFile(databasePath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return types.NewError(types.ErrStorage, "cannot create restricted database file", "grant the service ownership of the configured database path", err)
+	}
+	closeErr := database.Close()
+	if chmodErr := os.Chmod(databasePath, 0o600); chmodErr != nil {
+		return types.NewError(types.ErrStorage, "cannot restrict database file permissions", "grant the service ownership of the configured SQLite file", chmodErr)
+	}
+	if closeErr != nil {
+		return types.NewError(types.ErrStorage, "cannot close database file during permission setup", "check the configured database filesystem", closeErr)
+	}
+	return nil
 }
 
 func (r *LocalRepository) PutQuarantine(ctx context.Context, record QuarantineRecord) error {
