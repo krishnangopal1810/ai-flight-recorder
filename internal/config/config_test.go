@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/krishnangopal1810/ai-flight-recorder/internal/types"
 )
@@ -116,5 +117,39 @@ func TestAFRSEC003TransportEnvironmentIsParsedAtTheConfigBoundary(t *testing.T) 
 	}
 	if len(cfg.Auth.TrustedProxyCIDRs) != 2 || !cfg.Auth.TrustsProxy("10.0.0.4:443") || cfg.Auth.TrustsProxy("10.0.0.5:443") {
 		t.Fatalf("trusted proxy boundary = %#v", cfg.Auth.TrustedProxyCIDRs)
+	}
+}
+
+func TestAFRSEC004RetentionAndPayloadLimitsValidateAtTheBoundary(t *testing.T) {
+	valid := Default(t.TempDir())
+	valid.Policy.PayloadLimits = []PayloadLimit{
+		{Name: "keep-output", Field: "operations.output", Action: "keep"},
+		{Name: "omit-tools", Field: "model_configuration.tool_definitions", MaxBytes: 1024, Action: "omit"},
+		{Name: "truncate-transcript", Field: "artifacts", ArtifactClass: "transcript", MaxBytes: 128, Action: "truncate"},
+	}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("valid retention policy: %v", err)
+	}
+	invalid := []PayloadLimit{
+		{Name: "", Field: "operations.input", MaxBytes: 10, Action: "omit"},
+		{Name: "bad-field", Field: "unknown", MaxBytes: 10, Action: "omit"},
+		{Name: "bad-class", Field: "operations.input", ArtifactClass: "fixture", MaxBytes: 10, Action: "omit"},
+		{Name: "bad-action", Field: "operations.input", MaxBytes: 10, Action: "drop"},
+		{Name: "bad-keep", Field: "operations.input", MaxBytes: 10, Action: "keep"},
+		{Name: "bad-omit", Field: "operations.input", Action: "omit"},
+		{Name: "small-truncate", Field: "operations.input", MaxBytes: 32, Action: "truncate"},
+	}
+	for _, limit := range invalid {
+		cfg := Default(t.TempDir())
+		cfg.Policy.PayloadLimits = []PayloadLimit{limit}
+		if err := cfg.Validate(); err == nil {
+			t.Fatalf("invalid payload limit was accepted: %#v", limit)
+		}
+	}
+	t.Setenv("FLIGHT_RETENTION_INTERVAL", "15m")
+	cfg := Default(t.TempDir())
+	applyEnvironment(&cfg)
+	if cfg.Server.RetentionInterval != 15*time.Minute {
+		t.Fatalf("retention interval = %s", cfg.Server.RetentionInterval)
 	}
 }

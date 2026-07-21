@@ -120,3 +120,75 @@ func TestRetentionKeepsSharedBlobUntilFinalReferenceExpires(t *testing.T) {
 		t.Fatalf("unreferenced blob remains: %v", err)
 	}
 }
+
+func TestAFRSEC004UnsafeReferenceAccountingRollsBackWithoutAudit(t *testing.T) {
+	ctx := context.Background()
+	directory := t.TempDir()
+	repo, err := OpenLocal(ctx, filepath.Join(directory, "flight.db"), filepath.Join(directory, "blobs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	payload := []byte("accounting must remain conservative")
+	digest := digestBytes(payload)
+	past := time.Now().UTC().Add(-time.Hour)
+	capsule := types.RunCapsule{SchemaVersion: types.SchemaVersion, CapsuleID: "afr_accounting", TraceID: "accounting", ProjectID: "retention", ServiceName: "agent", StartTime: past, EndTime: past, ExpiresAt: &past, TerminalStatus: "ok"}
+	if err := repo.PutCapsule(ctx, capsule, map[string][]byte{digest: payload}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.db.ExecContext(ctx, `UPDATE payloads SET ref_count=0 WHERE digest=?`, digest); err != nil {
+		t.Fatal(err)
+	}
+	auditBefore, _ := repo.ListAuditEvents(ctx, 0)
+	deleted, err := repo.DeleteExpired(ctx, time.Now().UTC())
+	if err == nil || deleted != 0 {
+		t.Fatalf("unsafe accounting deletion = %d, %v", deleted, err)
+	}
+	if _, err := repo.GetCapsule(ctx, capsule.CapsuleID); err != nil {
+		t.Fatalf("capsule changed despite failed accounting: %v", err)
+	}
+	if loaded, err := repo.LoadPayload(ctx, digest); err != nil || string(loaded) != string(payload) {
+		t.Fatalf("payload changed despite failed accounting: %q, %v", loaded, err)
+	}
+	auditAfter, _ := repo.ListAuditEvents(ctx, 0)
+	if len(auditAfter) != len(auditBefore) {
+		t.Fatalf("failed accounting was audited as deletion: %d -> %d", len(auditBefore), len(auditAfter))
+	}
+}
+
+func TestAFRSEC004CleanupFailureRetainsBlobAndReturnsOperationalError(t *testing.T) {
+	ctx := context.Background()
+	directory := t.TempDir()
+	repo, err := OpenLocal(ctx, filepath.Join(directory, "flight.db"), filepath.Join(directory, "blobs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	payload := []byte("retryable retention payload")
+	digest := digestBytes(payload)
+	past := time.Now().UTC().Add(-time.Hour)
+	capsule := types.RunCapsule{SchemaVersion: types.SchemaVersion, CapsuleID: "afr_cleanup_failure", TraceID: "cleanup", ProjectID: "retention", ServiceName: "agent", StartTime: past, EndTime: past, ExpiresAt: &past, TerminalStatus: "ok"}
+	if err := repo.PutCapsule(ctx, capsule, map[string][]byte{digest: payload}); err != nil {
+		t.Fatal(err)
+	}
+	injected := errors.New("injected blob outage")
+	repo.removeBlob = func(string) error { return injected }
+	deleted, err := repo.DeleteExpired(ctx, time.Now().UTC())
+	if !errors.Is(err, injected) || deleted != 1 {
+		t.Fatalf("cleanup failure = %d, %v", deleted, err)
+	}
+	if loaded, err := repo.LoadPayload(ctx, digest); err != nil || string(loaded) != string(payload) {
+		t.Fatalf("failed cleanup removed payload: %q, %v", loaded, err)
+	}
+	var references int
+	if err := repo.db.QueryRowContext(ctx, `SELECT ref_count FROM payloads WHERE digest=?`, digest).Scan(&references); err != nil || references != 0 {
+		t.Fatalf("retryable payload metadata = %d, %v", references, err)
+	}
+	repo.removeBlob = os.Remove
+	if deleted, err := repo.DeleteExpired(ctx, time.Now().UTC()); err != nil || deleted != 0 {
+		t.Fatalf("cleanup retry = %d, %v", deleted, err)
+	}
+	if _, err := repo.LoadPayload(ctx, digest); !isNotFound(err) {
+		t.Fatalf("cleanup retry left payload: %v", err)
+	}
+}

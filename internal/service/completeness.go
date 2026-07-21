@@ -105,8 +105,24 @@ func ComputeCompleteness(capsule *types.RunCapsule) {
 			playback.State, playback.Missing = types.CompletenessIncomplete, append(playback.Missing, item)
 			diff.State, diff.Missing = types.CompletenessIncomplete, append(diff.Missing, item)
 		}
+		for _, content := range []struct {
+			direction string
+			ref       *types.PayloadRef
+		}{{"input", operation.Input}, {"output", operation.Output}} {
+			if !payloadTruncated(content.ref) {
+				continue
+			}
+			item := types.MissingItem{Code: "operation_" + content.direction + "_truncated", Message: "operation " + content.direction + " was truncated by capture policy"}
+			playback.State, playback.Missing = types.CompletenessIncomplete, append(playback.Missing, item)
+			diff.State, diff.Missing = types.CompletenessIncomplete, append(diff.Missing, item)
+		}
 		if operation.ParentSpanID == "" && payloadOmitted(operation.Input) {
 			item := types.MissingItem{Code: "root_input_omitted", Message: "the replay entrypoint input was omitted: " + operation.Input.Reason}
+			replay.State, replay.Missing = types.CompletenessBlocked, append(replay.Missing, item)
+			bisect.State, bisect.Missing = types.CompletenessBlocked, append(bisect.Missing, item)
+		}
+		if operation.ParentSpanID == "" && payloadTruncated(operation.Input) {
+			item := types.MissingItem{Code: "root_input_truncated", Message: "the replay entrypoint input was truncated by capture policy"}
 			replay.State, replay.Missing = types.CompletenessBlocked, append(replay.Missing, item)
 			bisect.State, bisect.Missing = types.CompletenessBlocked, append(bisect.Missing, item)
 		}
@@ -119,10 +135,22 @@ func ComputeCompleteness(capsule *types.RunCapsule) {
 			replay.State, replay.Missing = types.CompletenessBlocked, append(replay.Missing, item)
 			bisect.State, bisect.Missing = types.CompletenessBlocked, append(bisect.Missing, item)
 		}
+		if payloadTruncated(&definition) {
+			item := types.MissingItem{Code: "tool_definition_truncated", Message: "a model tool definition was truncated by capture policy"}
+			playback.State, playback.Missing = types.CompletenessIncomplete, append(playback.Missing, item)
+			diff.State, diff.Missing = types.CompletenessIncomplete, append(diff.Missing, item)
+			replay.State, replay.Missing = types.CompletenessBlocked, append(replay.Missing, item)
+			bisect.State, bisect.Missing = types.CompletenessBlocked, append(bisect.Missing, item)
+		}
 	}
 	for _, artifact := range capsule.Artifacts {
 		if payloadOmitted(artifact.Payload) {
 			item := types.MissingItem{Code: "artifact_payload_omitted", Message: "artifact " + artifact.ID + " was omitted: " + artifact.Payload.Reason}
+			playback.State, playback.Missing = types.CompletenessIncomplete, append(playback.Missing, item)
+			diff.State, diff.Missing = types.CompletenessIncomplete, append(diff.Missing, item)
+		}
+		if payloadTruncated(artifact.Payload) {
+			item := types.MissingItem{Code: "artifact_payload_truncated", Message: "artifact " + artifact.ID + " was truncated by capture policy"}
 			playback.State, playback.Missing = types.CompletenessIncomplete, append(playback.Missing, item)
 			diff.State, diff.Missing = types.CompletenessIncomplete, append(diff.Missing, item)
 		}
@@ -138,12 +166,22 @@ func ComputeCompleteness(capsule *types.RunCapsule) {
 			replay.State, replay.Missing = types.CompletenessBlocked, append(replay.Missing, item)
 			bisect.State, bisect.Missing = types.CompletenessBlocked, append(bisect.Missing, item)
 		}
+		if payloadTruncated(operation.Input) {
+			item := types.MissingItem{Code: "boundary_request_truncated", BoundaryID: boundary.ID, Message: "recorded request content was truncated and cannot be matched safely"}
+			replay.State, replay.Missing = types.CompletenessBlocked, append(replay.Missing, item)
+			bisect.State, bisect.Missing = types.CompletenessBlocked, append(bisect.Missing, item)
+		}
 		if boundary.Response == nil || boundary.Response.State == types.PayloadStateOmitted {
 			reason := "missing"
 			if boundary.Response != nil && boundary.Response.Reason != "" {
 				reason = boundary.Response.Reason
 			}
 			item := types.MissingItem{Code: "boundary_response_missing", BoundaryID: boundary.ID, Message: "recorded response is required for default substitution: " + reason}
+			replay.State, replay.Missing = types.CompletenessBlocked, append(replay.Missing, item)
+			bisect.State, bisect.Missing = types.CompletenessBlocked, append(bisect.Missing, item)
+		}
+		if payloadTruncated(boundary.Response) {
+			item := types.MissingItem{Code: "boundary_response_truncated", BoundaryID: boundary.ID, Message: "recorded response was truncated and cannot be substituted safely"}
 			replay.State, replay.Missing = types.CompletenessBlocked, append(replay.Missing, item)
 			bisect.State, bisect.Missing = types.CompletenessBlocked, append(bisect.Missing, item)
 		}
@@ -182,4 +220,8 @@ func appendUniqueAmbiguity(values []types.AmbiguityItem, candidate types.Ambigui
 
 func payloadOmitted(ref *types.PayloadRef) bool {
 	return ref != nil && ref.State == types.PayloadStateOmitted
+}
+
+func payloadTruncated(ref *types.PayloadRef) bool {
+	return ref != nil && ref.State == types.PayloadStateCaptured && ref.Reason == types.PayloadTruncated
 }

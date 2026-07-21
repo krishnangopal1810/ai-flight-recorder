@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/krishnangopal1810/ai-flight-recorder/internal/types"
@@ -18,8 +19,10 @@ import (
 )
 
 type LocalRepository struct {
-	db       *sql.DB
-	blobPath string
+	db          *sql.DB
+	blobPath    string
+	retentionMu sync.Mutex
+	removeBlob  func(string) error
 }
 
 func OpenLocal(ctx context.Context, databasePath, blobPath string) (*LocalRepository, error) {
@@ -37,7 +40,7 @@ func OpenLocal(ctx context.Context, databasePath, blobPath string) (*LocalReposi
 		return nil, types.NewError(types.ErrStorage, "cannot open SQLite database", "check the database path", err)
 	}
 	db.SetMaxOpenConns(1)
-	repository := &LocalRepository{db: db, blobPath: blobPath}
+	repository := &LocalRepository{db: db, blobPath: blobPath, removeBlob: os.Remove}
 	if _, err := db.ExecContext(ctx, "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;"); err != nil {
 		_ = db.Close()
 		return nil, types.NewError(types.ErrStorage, "cannot configure SQLite database", "verify the SQLite runtime and data directory", err)
@@ -83,6 +86,8 @@ func (r *LocalRepository) migrate(ctx context.Context) error {
 }
 
 func (r *LocalRepository) PutCapsule(ctx context.Context, capsule types.RunCapsule, payloads map[string][]byte) error {
+	r.retentionMu.Lock()
+	defer r.retentionMu.Unlock()
 	manifest, err := json.Marshal(capsule)
 	if err != nil {
 		return types.NewError(types.ErrValidation, "cannot serialize capsule", "fix non-JSON capsule fields", err)
@@ -285,63 +290,6 @@ func (r *LocalRepository) PutQuarantine(ctx context.Context, record QuarantineRe
 		return types.NewError(types.ErrStorage, "cannot persist quarantine record", "check database health", err)
 	}
 	return nil
-}
-
-func (r *LocalRepository) DeleteExpired(ctx context.Context, now time.Time) (int, error) {
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, types.NewError(types.ErrStorage, "cannot start retention transaction", "retain data and check database health", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	rows, err := tx.QueryContext(ctx, `SELECT id FROM capsules WHERE expires_at IS NOT NULL AND expires_at < ?`, now.UTC().Format(time.RFC3339Nano))
-	if err != nil {
-		return 0, types.NewError(types.ErrStorage, "cannot evaluate retention", "retain data and check database health", err)
-	}
-	ids := []string{}
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			_ = rows.Close()
-			return 0, err
-		}
-		ids = append(ids, id)
-	}
-	_ = rows.Close()
-	for _, id := range ids {
-		if _, err := tx.ExecContext(ctx, `UPDATE payloads SET ref_count=ref_count-1 WHERE digest IN (SELECT digest FROM capsule_payloads WHERE capsule_id=?)`, id); err != nil {
-			return 0, types.NewError(types.ErrStorage, "cannot update retention references", "retain data and check database health", err)
-		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM capsules WHERE id=?`, id); err != nil {
-			return 0, types.NewError(types.ErrStorage, "cannot expire capsule", "retain data and check database health", err)
-		}
-	}
-	audit, _ := json.Marshal(map[string]any{"capsule_count": len(ids)})
-	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events(kind,safe_metadata,created_at) VALUES(?,?,?)`, "retention_delete", audit, now.UTC().Format(time.RFC3339Nano)); err != nil {
-		return 0, types.NewError(types.ErrStorage, "cannot record retention audit", "retain data and check database health", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return 0, types.NewError(types.ErrStorage, "cannot commit retention", "retain data and check database health", err)
-	}
-	// Phase two removes only payloads whose committed reference count is zero.
-	zeroRows, queryErr := r.db.QueryContext(ctx, `SELECT digest FROM payloads WHERE ref_count=0`)
-	if queryErr != nil {
-		return len(ids), nil
-	}
-	zeros := []string{}
-	for zeroRows.Next() {
-		var digest string
-		if zeroRows.Scan(&digest) == nil {
-			zeros = append(zeros, digest)
-		}
-	}
-	_ = zeroRows.Close()
-	for _, digest := range zeros {
-		removeErr := os.Remove(r.blobFilename(digest))
-		if removeErr == nil || errors.Is(removeErr, fs.ErrNotExist) {
-			_, _ = r.db.ExecContext(ctx, `DELETE FROM payloads WHERE digest=? AND ref_count=0`, digest)
-		}
-	}
-	return len(ids), nil
 }
 
 func (r *LocalRepository) CreateToken(ctx context.Context, token Token) error {

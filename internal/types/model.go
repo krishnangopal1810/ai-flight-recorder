@@ -15,6 +15,7 @@ const (
 	OmissionPolicyExclusion = "policy_exclusion"
 	OmissionSerialization   = "serialization_failed"
 	OmissionInvalidMetadata = "invalid_omission_metadata"
+	PayloadTruncated        = "payload_truncated"
 )
 
 type CompletenessState string
@@ -102,11 +103,12 @@ type ModelConfiguration struct {
 }
 
 type PayloadRef struct {
-	Digest    string `json:"digest,omitempty"`
-	MediaType string `json:"media_type,omitempty"`
-	Size      int64  `json:"size"`
-	State     string `json:"state,omitempty"`
-	Reason    string `json:"reason,omitempty"`
+	Digest       string `json:"digest,omitempty"`
+	MediaType    string `json:"media_type,omitempty"`
+	Size         int64  `json:"size"`
+	OriginalSize int64  `json:"original_size,omitempty"`
+	State        string `json:"state,omitempty"`
+	Reason       string `json:"reason,omitempty"`
 }
 
 type Artifact struct {
@@ -161,6 +163,7 @@ type PrivacySummary struct {
 	Mode          string         `json:"mode"`
 	Redactions    map[string]int `json:"redactions,omitempty"`
 	Exclusions    map[string]int `json:"exclusions,omitempty"`
+	Truncations   map[string]int `json:"truncations,omitempty"`
 	ExportPolicy  string         `json:"export_policy,omitempty"`
 }
 

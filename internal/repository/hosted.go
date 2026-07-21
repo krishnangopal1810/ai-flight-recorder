@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -112,8 +113,16 @@ func (r *HostedRepository) PutCapsule(ctx context.Context, capsule types.RunCaps
 	if err != nil {
 		return types.NewError(types.ErrValidation, "cannot serialize capsule", "fix non-JSON capsule fields", err)
 	}
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return types.NewError(types.ErrStorage, "cannot begin capsule transaction", "retry after checking PostgreSQL health", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockPayloadDigests(ctx, tx, payloads); err != nil {
+		return err
+	}
 	var existing []byte
-	lookupErr := r.db.QueryRow(ctx, `SELECT manifest FROM capsules WHERE id=$1`, capsule.CapsuleID).Scan(&existing)
+	lookupErr := tx.QueryRow(ctx, `SELECT manifest FROM capsules WHERE id=$1`, capsule.CapsuleID).Scan(&existing)
 	if lookupErr == nil {
 		if !jsonDocumentsEqual(existing, manifest) {
 			return types.NewError(types.ErrConflict, "capsule identity collides with different manifest bytes", "quarantine the store and inspect digest integrity", nil)
@@ -134,11 +143,6 @@ func (r *HostedRepository) PutCapsule(ctx context.Context, capsule types.RunCaps
 			return err
 		}
 	}
-	tx, err := r.db.Begin(ctx)
-	if err != nil {
-		return types.NewError(types.ErrStorage, "cannot begin capsule transaction", "retry after checking PostgreSQL health", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, `INSERT INTO capsules(id,trace_id,project_id,service_name,start_time,terminal_status,manifest,expires_at,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, capsule.CapsuleID, capsule.TraceID, capsule.ProjectID, capsule.ServiceName, capsule.StartTime, capsule.TerminalStatus, manifest, capsule.ExpiresAt, time.Now().UTC()); err != nil {
 		return types.NewError(types.ErrStorage, "cannot persist capsule manifest", "use a unique immutable capsule or verify PostgreSQL health", err)
 	}
@@ -152,6 +156,27 @@ func (r *HostedRepository) PutCapsule(ctx context.Context, capsule types.RunCaps
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return types.NewError(types.ErrStorage, "cannot commit capsule", "retry after checking PostgreSQL health", err)
+	}
+	return nil
+}
+
+func lockPayloadDigests(ctx context.Context, tx pgx.Tx, payloads map[string][]byte) error {
+	digests := make([]string, 0, len(payloads))
+	for digest := range payloads {
+		digests = append(digests, digest)
+	}
+	sort.Strings(digests)
+	for _, digest := range digests {
+		if err := lockPayloadDigest(ctx, tx, digest); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func lockPayloadDigest(ctx context.Context, tx pgx.Tx, digest string) error {
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 407641923))`, digest); err != nil {
+		return types.NewError(types.ErrStorage, "cannot lock payload reference", "retry after checking PostgreSQL coordination", err)
 	}
 	return nil
 }
@@ -246,31 +271,45 @@ func (r *HostedRepository) DeleteExpired(ctx context.Context, now time.Time) (in
 		return 0, types.NewError(types.ErrStorage, "cannot start retention transaction", "retain data and check PostgreSQL health", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	rows, err := tx.Query(ctx, `SELECT id FROM capsules WHERE expires_at IS NOT NULL AND expires_at < $1 FOR UPDATE`, now)
+	rows, err := tx.Query(ctx, `SELECT id,project_id FROM capsules WHERE expires_at IS NOT NULL AND expires_at < $1 FOR UPDATE`, now)
 	if err != nil {
 		return 0, types.NewError(types.ErrStorage, "cannot evaluate retention", "retain data and check PostgreSQL health", err)
 	}
 	ids := []string{}
+	projectCounts := map[string]int{}
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var id, project string
+		if err := rows.Scan(&id, &project); err != nil {
 			rows.Close()
-			return 0, err
+			return 0, types.NewError(types.ErrStorage, "cannot read retention candidates", "retain data and check PostgreSQL health", err)
 		}
 		ids = append(ids, id)
+		projectCounts[project]++
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, types.NewError(types.ErrStorage, "cannot enumerate retention candidates", "retain data and check PostgreSQL health", err)
 	}
 	rows.Close()
+	referenceCount := int64(0)
 	for _, id := range ids {
-		if _, err := tx.Exec(ctx, `UPDATE payloads SET ref_count=ref_count-1 WHERE digest IN (SELECT digest FROM capsule_payloads WHERE capsule_id=$1)`, id); err != nil {
-			return 0, err
+		updated, err := tx.Exec(ctx, `UPDATE payloads SET ref_count=ref_count-1 WHERE digest IN (SELECT digest FROM capsule_payloads WHERE capsule_id=$1)`, id)
+		if err != nil {
+			return 0, types.NewError(types.ErrStorage, "cannot update retention references", "retain data and check PostgreSQL health", err)
 		}
+		referenceCount += updated.RowsAffected()
 		if _, err := tx.Exec(ctx, `DELETE FROM capsules WHERE id=$1`, id); err != nil {
-			return 0, err
+			return 0, types.NewError(types.ErrStorage, "cannot expire capsule", "retain data and check PostgreSQL health", err)
 		}
 	}
-	audit, _ := json.Marshal(map[string]any{"capsule_count": len(ids)})
-	if _, err := tx.Exec(ctx, `INSERT INTO audit_events(kind,safe_metadata,created_at) VALUES('retention_delete',$1,$2)`, audit, now); err != nil {
-		return 0, err
+	if len(ids) > 0 {
+		audit, marshalErr := json.Marshal(map[string]any{"capsule_count": len(ids), "payload_reference_count": referenceCount, "project_counts": projectCounts})
+		if marshalErr != nil {
+			return 0, types.NewError(types.ErrStorage, "cannot encode retention audit", "retain data and inspect safe audit metadata", marshalErr)
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO audit_events(kind,safe_metadata,created_at) VALUES('retention_delete',$1,$2)`, audit, now); err != nil {
+			return 0, types.NewError(types.ErrStorage, "cannot record retention audit", "retain data and check PostgreSQL health", err)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return 0, types.NewError(types.ErrStorage, "cannot commit retention", "retain data and check PostgreSQL health", err)
@@ -278,19 +317,54 @@ func (r *HostedRepository) DeleteExpired(ctx context.Context, now time.Time) (in
 	// Phase two deletes only objects whose committed reference count reached zero.
 	zeroRows, err := r.db.Query(ctx, `SELECT digest FROM payloads WHERE ref_count=0`)
 	if err != nil {
-		return len(ids), nil
+		return len(ids), types.NewError(types.ErrStorage, "cannot evaluate unreferenced payload cleanup", "unreferenced payloads were retained; check PostgreSQL health", err)
 	}
 	zeros := []string{}
 	for zeroRows.Next() {
 		var digest string
-		if zeroRows.Scan(&digest) == nil {
-			zeros = append(zeros, digest)
+		if err := zeroRows.Scan(&digest); err != nil {
+			zeroRows.Close()
+			return len(ids), types.NewError(types.ErrStorage, "cannot read unreferenced payload", "unreferenced payloads were retained; check PostgreSQL health", err)
 		}
+		zeros = append(zeros, digest)
+	}
+	if err := zeroRows.Err(); err != nil {
+		zeroRows.Close()
+		return len(ids), types.NewError(types.ErrStorage, "cannot enumerate unreferenced payloads", "unreferenced payloads were retained; check PostgreSQL health", err)
 	}
 	zeroRows.Close()
 	for _, digest := range zeros {
-		if err := r.objects.RemoveObject(ctx, r.bucket, objectKey(digest), minio.RemoveObjectOptions{}); err == nil {
-			_, _ = r.db.Exec(ctx, `DELETE FROM payloads WHERE digest=$1 AND ref_count=0`, digest)
+		cleanup, err := r.db.Begin(ctx)
+		if err != nil {
+			return len(ids), types.NewError(types.ErrStorage, "cannot begin unreferenced payload cleanup", "the payload was retained; check PostgreSQL health", err)
+		}
+		if err := lockPayloadDigest(ctx, cleanup, digest); err != nil {
+			_ = cleanup.Rollback(ctx)
+			return len(ids), err
+		}
+		var references int64
+		if err := cleanup.QueryRow(ctx, `SELECT ref_count FROM payloads WHERE digest=$1 FOR UPDATE`, digest).Scan(&references); err != nil {
+			_ = cleanup.Rollback(ctx)
+			if errors.Is(err, pgx.ErrNoRows) {
+				continue
+			}
+			return len(ids), types.NewError(types.ErrStorage, "cannot recheck unreferenced payload", "the payload was retained; check PostgreSQL health", err)
+		}
+		if references != 0 {
+			_ = cleanup.Rollback(ctx)
+			continue
+		}
+		if err := r.objects.RemoveObject(ctx, r.bucket, objectKey(digest), minio.RemoveObjectOptions{}); err != nil {
+			_ = cleanup.Rollback(ctx)
+			return len(ids), types.NewError(types.ErrStorage, "cannot remove unreferenced payload", "the payload was retained; check object storage health and retry retention", err)
+		}
+		deleted, err := cleanup.Exec(ctx, `DELETE FROM payloads WHERE digest=$1 AND ref_count=0`, digest)
+		if err != nil || deleted.RowsAffected() != 1 {
+			_ = cleanup.Rollback(ctx)
+			return len(ids), types.NewError(types.ErrStorage, "cannot finalize unreferenced payload cleanup", "retry retention after checking reference accounting", err)
+		}
+		if err := cleanup.Commit(ctx); err != nil {
+			return len(ids), types.NewError(types.ErrStorage, "cannot commit unreferenced payload cleanup", "retry retention after checking PostgreSQL health", err)
 		}
 	}
 	return len(ids), nil

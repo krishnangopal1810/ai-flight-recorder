@@ -76,6 +76,128 @@ func TestAFRCAP003TypedOmissionsRetainSafeEvidenceAndBlockAffectedBoundary(t *te
 	}
 }
 
+func TestAFRSEC004ClassLimitsPersistTypedPartialEvidenceAndCompleteness(t *testing.T) {
+	ctx := context.Background()
+	directory := t.TempDir()
+	repo, err := repository.OpenLocal(ctx, filepath.Join(directory, "flight.db"), filepath.Join(directory, "blobs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	policy, err := NewPolicyEngine(config.CapturePolicy{
+		Version: "1", Mode: "strict", MaxFieldSize: 1024,
+		PayloadLimits: []config.PayloadLimit{
+			{Name: "truncate-input", Field: "operations.input", MaxBytes: 96, Action: "truncate"},
+			{Name: "keep-output", Field: "operations.output", Action: "keep"},
+			{Name: "omit-tools", Field: "model_configuration.tool_definitions", MaxBytes: 32, Action: "omit"},
+			{Name: "truncate-transcript", Field: "artifacts", ArtifactClass: "transcript", MaxBytes: 96, Action: "truncate"},
+			{Name: "omit-other-artifacts", Field: "artifacts", MaxBytes: 8, Action: "omit"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := []byte(`{"prompt":"` + strings.Repeat("p", 200) + `"}`)
+	output := []byte(`{"answer":"kept"}`)
+	tools := []byte(`[{"type":"function","name":"` + strings.Repeat("t", 80) + `"}]`)
+	transcript := []byte(`{"turn":"` + strings.Repeat("x", 200) + `"}`)
+	screenshot := []byte("0123456789abcdef")
+	capsule, err := NewCapsuleService(repo, policy).Capture(ctx, CaptureRequest{
+		TraceID: "44444444444444444444444444444444", ProjectID: "retention", ServiceName: "agent", StartTime: time.Unix(1, 0), EndTime: time.Unix(2, 0),
+		Provenance:      types.Provenance{CommitSHA: strings.Repeat("a", 40), Entrypoint: &types.Entrypoint{Command: []string{"/agent"}, Image: "sha256:" + strings.Repeat("a", 64), InputMode: "stdin_json", OutputMode: "stdout_json"}},
+		ToolDefinitions: []CapturePayload{{Data: tools, MediaType: "application/json"}},
+		Operations: []CaptureOperation{{
+			Operation: types.Operation{SpanID: "4444444444444444", LogicalKey: "api.retention", Kind: "api", Name: "retention", StartTime: time.Unix(1, 0), EndTime: time.Unix(2, 0), Status: "ok"},
+			Input:     input, InputType: "application/json", Output: output, OutputType: "application/json",
+			Boundary: &types.Boundary{LogicalKey: "api.retention", Class: "api", SideEffect: "read_only", ReplayPolicy: "substitute", MatchingRule: types.MatchingRule{Mode: "exact"}},
+		}},
+		Artifacts: []struct {
+			Artifact types.Artifact
+			Data     []byte
+		}{
+			{Artifact: types.Artifact{ID: "transcript", Type: "transcript", LogicalName: "session", MediaType: "application/json"}, Data: transcript},
+			{Artifact: types.Artifact{ID: "screenshot", Type: "screenshot", LogicalName: "screen", MediaType: "image/png"}, Data: screenshot},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation := capsule.Operations[0]
+	if !payloadTruncated(operation.Input) || operation.Input.OriginalSize != int64(len(input)) || operation.Input.Size > 96 {
+		t.Fatalf("truncated input = %#v", operation.Input)
+	}
+	if operation.Output == nil || operation.Output.State != types.PayloadStateCaptured || operation.Output.Reason != "" {
+		t.Fatalf("kept output = %#v", operation.Output)
+	}
+	if len(capsule.Model.ToolDefinitions) != 1 || !payloadOmitted(&capsule.Model.ToolDefinitions[0]) {
+		t.Fatalf("omitted tool definition = %#v", capsule.Model.ToolDefinitions)
+	}
+	if len(capsule.Artifacts) != 2 || !payloadTruncated(capsule.Artifacts[0].Payload) || !payloadOmitted(capsule.Artifacts[1].Payload) {
+		t.Fatalf("artifact limits = %#v", capsule.Artifacts)
+	}
+	if capsule.Privacy.Truncations["truncate-input"] != 1 || capsule.Privacy.Truncations["truncate-transcript"] != 1 {
+		t.Fatalf("truncation summary = %#v", capsule.Privacy.Truncations)
+	}
+	if len(capsule.Integrity.PayloadDigests) != 3 {
+		t.Fatalf("payload digests = %#v", capsule.Integrity.PayloadDigests)
+	}
+	stored, err := repo.LoadPayload(ctx, operation.Input.Digest)
+	if err != nil || !json.Valid(stored) || !strings.Contains(string(stored), "_flight_truncated_prefix_base64") {
+		t.Fatalf("stored truncated evidence = %s, %v", stored, err)
+	}
+	missing := capsule.Completeness["replay"].Missing
+	for _, code := range []string{"root_input_truncated", "boundary_request_truncated", "tool_definition_omitted"} {
+		if !slices.ContainsFunc(missing, func(item types.MissingItem) bool { return item.Code == code }) {
+			t.Fatalf("replay completeness %#v does not include %s", missing, code)
+		}
+	}
+	if capsule.Completeness["replay"].State != types.CompletenessBlocked || capsule.Completeness["playback"].State != types.CompletenessIncomplete {
+		t.Fatalf("class-limit completeness = %#v", capsule.Completeness)
+	}
+}
+
+func TestAFRSEC004CapturePersistsProjectSpecificExpiry(t *testing.T) {
+	ctx := context.Background()
+	directory := t.TempDir()
+	repo, err := repository.OpenLocal(ctx, filepath.Join(directory, "flight.db"), filepath.Join(directory, "blobs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	policy, err := NewPolicyEngine(config.CapturePolicy{
+		Version:          "1",
+		Mode:             "strict",
+		MaxFieldSize:     1024,
+		DefaultRetention: 30 * 24 * time.Hour,
+		ProjectRetention: map[string]time.Duration{"short-lived": time.Hour},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ended := time.Date(2026, time.July, 21, 4, 0, 0, 0, time.UTC)
+	capsule, err := NewCapsuleService(repo, policy).Capture(ctx, CaptureRequest{
+		TraceID:     "55555555555555555555555555555555",
+		ProjectID:   "short-lived",
+		ServiceName: "agent",
+		StartTime:   ended.Add(-time.Minute),
+		EndTime:     ended,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := ended.Add(time.Hour)
+	if capsule.ExpiresAt == nil || !capsule.ExpiresAt.Equal(want) {
+		t.Fatalf("capture expiry = %v, want %s", capsule.ExpiresAt, want)
+	}
+	stored, err := repo.GetCapsule(ctx, capsule.CapsuleID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.ExpiresAt == nil || !stored.ExpiresAt.Equal(want) {
+		t.Fatalf("stored expiry = %v, want %s", stored.ExpiresAt, want)
+	}
+}
+
 func TestAFRCAP003ProducerOmissionMetadataIsNormalized(t *testing.T) {
 	service := &CapsuleService{}
 	ref, data, _, err := service.captureContent("operations.input", CapturePayload{Omission: &types.PayloadRef{Digest: "sha256:" + strings.Repeat("A", 64), Size: -1, Reason: "producer_guess"}})
@@ -85,6 +207,18 @@ func TestAFRCAP003ProducerOmissionMetadataIsNormalized(t *testing.T) {
 	encoded, err := json.Marshal(ref)
 	if err != nil || strings.Contains(string(encoded), `"digest"`) {
 		t.Fatalf("omission JSON must not emit an empty schema-invalid digest: %s (err=%v)", encoded, err)
+	}
+}
+
+func TestPayloadValidationRecognizesStructuredJSONSuffixes(t *testing.T) {
+	policy, err := NewPolicyEngine(config.CapturePolicy{Version: "1", Mode: "strict", MaxFieldSize: 1024})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &CapsuleService{policy: policy}
+	ref, data, _, err := service.capturePayload("operations.output", "", []byte(`{"broken":`), "application/problem+json; charset=utf-8")
+	if err != nil || data != nil || ref.State != types.PayloadStateOmitted || ref.Reason != types.OmissionSerialization {
+		t.Fatalf("structured JSON validation = %#v data=%q err=%v", ref, data, err)
 	}
 }
 

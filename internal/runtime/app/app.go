@@ -142,7 +142,7 @@ func (a *Application) runRetention(ctx context.Context) {
 	run := func() {
 		deleted, err := a.Repository.DeleteExpired(ctx, time.Now().UTC())
 		if err != nil {
-			a.Logger.Error("retention evaluation failed", "code", errorCode(err))
+			a.Logger.Error("retention evaluation failed", "code", errorCode(err), "capsule_count", deleted)
 			return
 		}
 		if deleted > 0 {
@@ -150,7 +150,7 @@ func (a *Application) runRetention(ctx context.Context) {
 		}
 	}
 	run()
-	ticker := time.NewTicker(time.Hour)
+	ticker := time.NewTicker(a.Config.Server.RetentionInterval)
 	defer ticker.Stop()
 	for {
 		select {
