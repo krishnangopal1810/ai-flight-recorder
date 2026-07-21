@@ -74,6 +74,8 @@ PY
 ./scripts/completeness-smoke.sh --help >/dev/null
 ./scripts/privacy-smoke.sh --help >/dev/null
 ./scripts/access-smoke.sh --help >/dev/null
+./scripts/playback-offline-smoke.sh --help >/dev/null
+./scripts/playback-smoke.sh --help >/dev/null
 go run ./cmd/flight --help >/dev/null
 for command in record replay diff playback bisect capsule evaluator token serve; do
   go run ./cmd/flight "$command" --help >/dev/null

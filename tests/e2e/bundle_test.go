@@ -250,13 +250,19 @@ func assertOfflinePlayback(t *testing.T, repo repository.Repository, policy *ser
 		t.Fatalf("offline playback status=%d body=%s", response.Code, response.Body.String())
 	}
 	var result struct {
-		Capsule  types.RunCapsule `json:"capsule"`
-		Executed bool             `json:"executed"`
+		Capsule                     types.RunCapsule          `json:"capsule"`
+		Completeness                types.CapsuleCompleteness `json:"completeness"`
+		Payloads                    []types.PlaybackPayload   `json:"payloads"`
+		Warnings                    []types.PlaybackWarning   `json:"warnings"`
+		Executed                    bool                      `json:"executed"`
+		ApplicationProcessesStarted int                       `json:"application_processes_started"`
+		OutboundRequests            int                       `json:"outbound_requests"`
+		ManifestVerified            bool                      `json:"manifest_verified"`
 	}
 	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.Executed || result.Capsule.CapsuleID != capsule.CapsuleID {
+	if result.Executed || result.ApplicationProcessesStarted != 0 || result.OutboundRequests != 0 || !result.ManifestVerified || result.Capsule.CapsuleID != capsule.CapsuleID || len(result.Warnings) != 0 || len(result.Payloads) != len(capsule.Integrity.PayloadDigests) || result.Completeness.Playback.State == types.CompletenessBlocked {
 		t.Fatalf("offline playback executed code or changed identity: %#v", result)
 	}
 }

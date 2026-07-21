@@ -57,7 +57,7 @@ e2e:
 	cd web && npm run test:e2e
 
 security:
-	@if docker info >/dev/null 2>&1; then docker build --tag ai-flight-recorder:local --file deploy/Dockerfile .; fi
+	@if docker info >/dev/null 2>&1; then docker build --tag ai-flight-recorder:local --file deploy/Dockerfile . && ./scripts/playback-offline-smoke.sh; fi
 	go test -count=1 -tags=security ./tests/security/...
 
 architecture-check:

@@ -313,6 +313,7 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         RunCapsule: components["schemas"]["run-capsule.schema"];
+        Playback: components["schemas"]["playback.schema"];
         CapsuleCompleteness: components["schemas"]["capsule-completeness.schema"];
         ReplayPlan: components["schemas"]["replay-plan.schema"];
         Evaluator: components["schemas"]["evaluator.schema"];
@@ -446,7 +447,7 @@ export interface components {
         }) & (unknown & unknown);
         integrity: {
             /** @constant */
-            algorithm: "sha256+rfc8785";
+            algorithm: "sha256";
             manifest_digest: components["schemas"]["digest"];
             payload_digests: components["schemas"]["digest"][];
             root_digest: components["schemas"]["digest"];
@@ -575,6 +576,17 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        evaluation: {
+            id: string;
+            version: string;
+            inputs?: components["schemas"]["payload"][];
+            result?: unknown;
+            score?: number;
+            threshold?: number;
+            evidence?: components["schemas"]["payload"];
+        } & {
+            [key: string]: unknown;
+        };
         /** AI Flight Recorder Run Capsule */
         "run-capsule.schema": {
             schema_version: string;
@@ -600,9 +612,7 @@ export interface components {
             operations: components["schemas"]["operation"][];
             boundaries?: components["schemas"]["boundary.schema"][];
             privacy: components["schemas"]["privacy"];
-            evaluations?: {
-                [key: string]: unknown;
-            }[];
+            evaluations?: components["schemas"]["evaluation"][];
             replay_history?: {
                 [key: string]: unknown;
             }[];
@@ -625,7 +635,7 @@ export interface components {
                 }) & (unknown & unknown);
                 integrity: {
                     /** @constant */
-                    algorithm: "sha256+rfc8785";
+                    algorithm: "sha256";
                     manifest_digest: components["schemas"]["digest"];
                     payload_digests: components["schemas"]["digest"][];
                     root_digest: components["schemas"]["digest"];
@@ -721,6 +731,17 @@ export interface components {
                 } & {
                     [key: string]: unknown;
                 };
+                evaluation: {
+                    id: string;
+                    version: string;
+                    inputs?: components["schemas"]["payload"][];
+                    result?: unknown;
+                    score?: number;
+                    threshold?: number;
+                    evidence?: components["schemas"]["payload"];
+                } & {
+                    [key: string]: unknown;
+                };
                 privacy: {
                     policy_version?: string;
                     policy_digest?: components["schemas"]["digest"];
@@ -751,6 +772,50 @@ export interface components {
             replay: components["schemas"]["completeness-report.schema"];
             diff: components["schemas"]["completeness-report.schema"];
             bisect: components["schemas"]["completeness-report.schema"];
+        } & {
+            [key: string]: unknown;
+        };
+        /** Playback Result */
+        "playback.schema": {
+            /** @constant */
+            schema_version: "1.0";
+            /** @constant */
+            mode: "playback";
+            /** @constant */
+            executed: false;
+            /** @constant */
+            application_processes_started: 0;
+            /** @constant */
+            outbound_requests: 0;
+            /** @constant */
+            manifest_verified: true;
+            capsule: components["schemas"]["run-capsule.schema"];
+            completeness: components["schemas"]["capsule-completeness.schema"];
+            payloads: ({
+                digest: string;
+                /** @enum {unknown} */
+                availability: "available" | "missing" | "corrupt" | "unavailable";
+                media_type?: string;
+                size: number;
+                original_size?: number;
+                reason?: string;
+                references: string[];
+                preview?: string;
+                /** @enum {unknown} */
+                preview_encoding?: "json" | "utf8" | "base64";
+                preview_truncated?: boolean;
+            } & {
+                [key: string]: unknown;
+            })[];
+            warnings: ({
+                /** @enum {unknown} */
+                code: "payload_missing" | "payload_corrupt" | "payload_unavailable";
+                digest: string;
+                references: string[];
+                message: string;
+            } & {
+                [key: string]: unknown;
+            })[];
         } & {
             [key: string]: unknown;
         };
@@ -986,12 +1051,14 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Recorded execution without application execution */
+            /** @description Manifest-verified recorded evidence without application execution */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["playback.schema"];
+                };
             };
         };
     };
