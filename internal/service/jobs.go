@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -23,6 +24,44 @@ func (s *JobService) Get(ctx context.Context, id string) (types.Job, error) {
 }
 func (s *JobService) Events(ctx context.Context, id string, after int64) ([]types.JobEvent, error) {
 	return s.repository.ListJobEvents(ctx, id, after)
+}
+
+func (s *JobService) List(ctx context.Context, sourceID, state string, limit int) ([]types.JobSummary, error) {
+	jobs, err := s.repository.ListJobs(ctx, 5000)
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	result := make([]types.JobSummary, 0, min(limit, len(jobs)))
+	for _, job := range jobs {
+		summary := summarizeJob(job)
+		if sourceID != "" && summary.SourceCapsuleID != sourceID {
+			continue
+		}
+		if state != "" && string(summary.State) != state {
+			continue
+		}
+		result = append(result, summary)
+		if len(result) == limit {
+			break
+		}
+	}
+	return result, nil
+}
+
+func summarizeJob(job types.Job) types.JobSummary {
+	summary := types.JobSummary{ID: job.ID, Kind: job.Kind, State: job.State, Error: job.Error, CreatedAt: job.CreatedAt, UpdatedAt: job.UpdatedAt}
+	var request types.ReplayJobRequest
+	if json.Unmarshal(job.Request, &request) == nil {
+		summary.SourceCapsuleID = request.Plan.SourceCapsuleID
+	}
+	var result types.ReplayJobResult
+	if json.Unmarshal(job.Result, &result) == nil {
+		summary.CandidateCapsuleID, summary.Outcome = result.CandidateCapsuleID, result.Outcome
+	}
+	return summary
 }
 
 func (s *JobService) Run(ctx context.Context) {

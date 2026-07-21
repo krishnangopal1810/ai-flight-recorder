@@ -154,7 +154,7 @@ func (r *LocalRepository) GetCapsule(ctx context.Context, id string) (types.RunC
 }
 
 func (r *LocalRepository) ListCapsules(ctx context.Context, project string, limit int) ([]types.CapsuleSummary, error) {
-	if limit <= 0 || limit > 500 {
+	if limit <= 0 || limit > 5000 {
 		limit = 100
 	}
 	query := `SELECT manifest FROM capsules`
@@ -180,7 +180,7 @@ func (r *LocalRepository) ListCapsules(ctx context.Context, project string, limi
 		if err := json.Unmarshal(manifest, &capsule); err != nil {
 			return nil, types.NewError(types.ErrStorage, "stored capsule is invalid", "restore a verified backup", err)
 		}
-		result = append(result, types.CapsuleSummary{CapsuleID: capsule.CapsuleID, TraceID: capsule.TraceID, ProjectID: capsule.ProjectID, ServiceName: capsule.ServiceName, StartTime: capsule.StartTime, TerminalStatus: capsule.TerminalStatus, Completeness: capsule.Completeness})
+		result = append(result, summarizeCapsule(capsule))
 	}
 	return result, rows.Err()
 }
@@ -381,6 +381,26 @@ func (r *LocalRepository) PutJob(ctx context.Context, job types.Job) error {
 func (r *LocalRepository) GetJob(ctx context.Context, id string) (types.Job, error) {
 	row := r.db.QueryRowContext(ctx, `SELECT id,kind,state,request,result,error,lease_owner,lease_expires_at,created_at,updated_at FROM jobs WHERE id=?`, id)
 	return scanJob(row)
+}
+
+func (r *LocalRepository) ListJobs(ctx context.Context, limit int) ([]types.Job, error) {
+	if limit <= 0 || limit > 5000 {
+		limit = 100
+	}
+	rows, err := r.db.QueryContext(ctx, `SELECT id,kind,state,request,result,error,lease_owner,lease_expires_at,created_at,updated_at FROM jobs ORDER BY created_at DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, types.NewError(types.ErrStorage, "cannot list jobs", "check database health", err)
+	}
+	defer rows.Close()
+	result := []types.Job{}
+	for rows.Next() {
+		job, scanErr := scanJob(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		result = append(result, job)
+	}
+	return result, rows.Err()
 }
 
 func (r *LocalRepository) ClaimJob(ctx context.Context, owner string, until time.Time) (*types.Job, error) {

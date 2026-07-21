@@ -24,6 +24,8 @@ interface RecordedBoundary {
   request_digest: string;
   response_state?: string;
   response?: unknown;
+  override_target?: "request" | "response";
+  request_override?: unknown;
 }
 
 interface ReplayFile {
@@ -100,27 +102,37 @@ export function recordEnvironment(names: string[]): void {
 	});
 }
 
-export async function boundary<T>(request: unknown, call: () => T | Promise<T>, options: BoundaryOptions): Promise<T> {
+export async function boundary<T>(request: unknown, call: (() => T | Promise<T>) | ((effectiveRequest: unknown) => T | Promise<T>), options: BoundaryOptions): Promise<T> {
   const sideEffect = options.sideEffect ?? "unknown";
   const replayPolicy = options.replayPolicy ?? "substitute";
 	const plan = loadPlan();
+	const occurrenceKey = `${options.parentLogicalKey ?? ""}\u0000${options.boundaryClass}\u0000${options.logicalKey}`;
+  const occurrence = occurrences.get(occurrenceKey) ?? 0;
+  occurrences.set(occurrenceKey, occurrence + 1);
+	const requestOverride = (plan?.boundaries ?? []).filter(item => item.logical_key === options.logicalKey && item.boundary_class === options.boundaryClass && (item.parent_logical_key ?? "") === (options.parentLogicalKey ?? "") && (item.occurrence ?? 0) === occurrence && item.override_target === "request" && "request_override" in item);
+	if (requestOverride.length > 1) throw new Error(`unmatched_boundary: ambiguous replay override for ${options.logicalKey}`);
+	const requestOverridden = requestOverride.length === 1;
+	const effectiveRequest = requestOverridden ? requestOverride[0]?.request_override : request;
 	let requestDigest = "";
-	try { requestDigest = digest(request, options.ignorePaths ?? []); }
+	try { requestDigest = digest(effectiveRequest, options.ignorePaths ?? []); }
 	catch (error) {
 		if (plan) throw new Error(`unmatched_boundary: request for ${options.logicalKey} is not canonical JSON`);
 		diagnostic("boundary_digest", error);
 	}
-	const occurrenceKey = `${options.parentLogicalKey ?? ""}\u0000${options.boundaryClass}\u0000${options.logicalKey}`;
-  const occurrence = occurrences.get(occurrenceKey) ?? 0;
-  occurrences.set(occurrenceKey, occurrence + 1);
-	annotate(options, sideEffect, replayPolicy, requestDigest, request);
-	if (!plan) { const response = await call(); captureResponse(response); return response; }
+	annotate(options, sideEffect, replayPolicy, requestDigest, effectiveRequest);
+	if (!plan) { const response = await invokeBoundary(call, effectiveRequest, false); captureResponse(response); return response; }
   const candidates = (plan.boundaries ?? []).filter(item => item.logical_key === options.logicalKey && item.boundary_class === options.boundaryClass && (item.parent_logical_key ?? "") === (options.parentLogicalKey ?? "") && (item.occurrence ?? 0) === occurrence);
   const exact = candidates.filter(item => item.request_digest === requestDigest);
   if (exact.length === 1 && plan.substitutions?.includes(options.logicalKey) && (exact[0]?.response_state ?? "captured") === "captured") { captureResponse(exact[0]?.response); return exact[0]?.response as T; }
   if (exact.length > 1 || candidates.length > 1) throw new Error(`unmatched_boundary: ambiguous replay match for ${options.logicalKey}`);
-	if (replayPolicy === "live" && plan.live_boundaries?.includes(options.logicalKey)) { const response = await call(); captureResponse(response); return response; }
+	if (replayPolicy === "live" && plan.live_boundaries?.includes(options.logicalKey)) { const response = await invokeBoundary(call, effectiveRequest, requestOverridden); captureResponse(response); return response; }
   throw new Error(`unmatched_boundary: ${options.logicalKey} occurrence ${occurrence}; live fallback is disabled`);
+}
+
+async function invokeBoundary<T>(call: (() => T | Promise<T>) | ((effectiveRequest: unknown) => T | Promise<T>), request: unknown, overrideRequired: boolean): Promise<T> {
+	if (call.length > 0) return (call as (effectiveRequest: unknown) => T | Promise<T>)(request);
+	if (overrideRequired) throw new Error("unsafe_replay: model input override requires a request-aware boundary callback");
+	return (call as () => T | Promise<T>)();
 }
 
 export const openAIBoundary = <T>(logicalKey: string, request: unknown, call: () => T | Promise<T>) => boundary(request, call, {logicalKey, boundaryClass: "llm", sideEffect: "read_only", replayPolicy: "live"});

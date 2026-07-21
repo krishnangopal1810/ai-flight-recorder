@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -69,6 +70,69 @@ func TestAFRT04RecordedExternalResponseIsSubstitutedOffline(t *testing.T) {
 	}
 	if !strings.Contains(string(envelope), `"response":{"status":"approved"}`) {
 		t.Fatalf("recorded response missing from envelope: %s", envelope)
+	}
+}
+
+func TestAFRT04ASelectedToolOutputOverridesOnlyThatRecordedResponse(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	repo, err := repository.OpenLocal(ctx, filepath.Join(root, "flight.db"), filepath.Join(root, "blobs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	recorded := []byte(`{"eligible":false}`)
+	digest := DigestBytes(recorded)
+	if err := repo.PutCapsule(ctx, types.RunCapsule{CapsuleID: "response-owner", TraceID: "trace", StartTime: time.Unix(1, 0).UTC(), TerminalStatus: "ok"}, map[string][]byte{digest: recorded}); err != nil {
+		t.Fatal(err)
+	}
+	source := types.RunCapsule{Boundaries: []types.Boundary{{ID: "eligibility", LogicalKey: "tool.eligibility", Class: "tool", Occurrence: 0, RequestDigest: "sha256:request", ReplayPolicy: "substitute", Response: &types.PayloadRef{Digest: digest, State: "captured"}}}}
+	plan := types.ReplayPlan{SchemaVersion: types.SchemaVersion, Overrides: []types.ReplayOverride{{BoundaryID: "eligibility", Target: "response", Value: json.RawMessage(`{"eligible":true}`)}}}
+	replays := NewReplayService(repo, nil, nil, acceptanceRunner{}, NewDiffService(), nil, "")
+	envelope, substitutions, live, _, err := replays.envelope(ctx, source, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(substitutions) != 1 || substitutions[0] != "tool.eligibility" || len(live) != 0 {
+		t.Fatalf("override routing = substitutions %v live %v", substitutions, live)
+	}
+	if !strings.Contains(string(envelope), `"override_target":"response"`) || !strings.Contains(string(envelope), `"response":{"eligible":true}`) || strings.Contains(string(envelope), `"response":{"eligible":false}`) {
+		t.Fatalf("tool output override missing from envelope: %s", envelope)
+	}
+}
+
+func TestAFRT04BSelectedModelInputRunsLiveWithTheEditedRequest(t *testing.T) {
+	source := types.RunCapsule{Boundaries: []types.Boundary{{ID: "decision", LogicalKey: "llm.decision", Class: "llm", Occurrence: 0, RequestDigest: "sha256:old", ReplayPolicy: "live", SideEffect: "read_only"}}}
+	plan := types.ReplayPlan{SchemaVersion: types.SchemaVersion, Entrypoint: types.Entrypoint{ModelHosts: []string{"model.internal"}}, Overrides: []types.ReplayOverride{{BoundaryID: "decision", Target: "request", Value: json.RawMessage(`{"prompt":"approve eligible refunds"}`)}}}
+	replays := NewReplayService(nil, nil, nil, acceptanceRunner{}, NewDiffService(), nil, "")
+	envelope, substitutions, live, hosts, err := replays.envelope(context.Background(), source, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(substitutions) != 0 || len(live) != 1 || live[0] != "llm.decision" || len(hosts) != 1 || hosts[0] != "model.internal" {
+		t.Fatalf("model input routing = substitutions %v live %v hosts %v", substitutions, live, hosts)
+	}
+	if !strings.Contains(string(envelope), `"override_target":"request"`) || !strings.Contains(string(envelope), `"request_override":{"prompt":"approve eligible refunds"}`) || strings.Contains(string(envelope), `"request_digest":"sha256:old"`) {
+		t.Fatalf("model input override missing from envelope: %s", envelope)
+	}
+}
+
+func TestAFRT04CReplayProvesTheEditedValueWasActuallyApplied(t *testing.T) {
+	override := types.ReplayOverride{BoundaryID: "decision", Target: "response", Value: json.RawMessage(`{"decision":"approve"}`)}
+	canonical, err := CanonicalJSON(map[string]any{"decision": "approve"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := types.RunCapsule{Boundaries: []types.Boundary{{ID: "decision", LogicalKey: "llm.decision", Class: "llm", ParentLogicalKey: "agent", Occurrence: 0}}}
+	candidate := types.RunCapsule{Boundaries: []types.Boundary{{LogicalKey: "llm.decision", Class: "llm", ParentLogicalKey: "agent", Occurrence: 0, Response: &types.PayloadRef{Digest: DigestBytes(canonical)}}}}
+	results := verifyReplayOverrides(source, candidate, []types.ReplayOverride{override})
+	if len(results) != 1 || !results[0].Applied {
+		t.Fatalf("applied override was not proven: %#v", results)
+	}
+	candidate.Boundaries[0].Response.Digest = DigestBytes([]byte(`""`))
+	results = verifyReplayOverrides(source, candidate, []types.ReplayOverride{override})
+	if len(results) != 1 || results[0].Applied {
+		t.Fatalf("missing override was falsely reported as applied: %#v", results)
 	}
 }
 

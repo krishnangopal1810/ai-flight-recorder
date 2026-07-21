@@ -1,70 +1,47 @@
-import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { api, type CapsuleSummary, type Job } from "./api";
-import { CapsuleDetail } from "./PlaybackInspector";
+import {useState} from "react";
+import {useQuery, useQueryClient} from "@tanstack/react-query";
+import {APIError, api, connection} from "./api";
+import {BrandMark, ConnectionScreen, supportedService} from "./ConnectionScreen";
+import {JobsExperience} from "./JobsWorkspace";
+import {RecordWorkspace} from "./RecordWorkspace";
+import {RunsExperience} from "./RunsWorkspace";
+import {useRoute} from "./routing";
 
 export function App() {
-  const capsules = useQuery({queryKey: ["capsules"], queryFn: api.capsules});
-  const initialCapsule = window.location.pathname.match(/^\/capsules\/([^/]+)$/)?.[1];
-  const initialJob = window.location.pathname.match(/^\/jobs\/([^/]+)$/)?.[1];
-  const [selectedID, setSelectedID] = useState<string | null>(initialCapsule ? decodeURIComponent(initialCapsule) : null);
-  const [jobInput, setJobInput] = useState(initialJob ? decodeURIComponent(initialJob) : "");
-  const [trackedJob, setTrackedJob] = useState(initialJob ? decodeURIComponent(initialJob) : "");
-  const selected = useQuery({queryKey: ["playback", selectedID], queryFn: () => api.playback(selectedID!), enabled: Boolean(selectedID)});
-  const ready = capsules.data ?? [];
+  const {route, navigate} = useRoute();
+  const client = useQueryClient();
+  const session = useQuery({queryKey: ["session", connection.serviceURL], queryFn: api.session, retry: false});
+  const [density, setDensity] = useState(() => localStorage.getItem("flight_density") ?? "comfortable");
 
-  return <div className="shell">
-    <header className="masthead">
-      <div className="brand-mark" aria-hidden="true"><span /><span /><span /></div>
-      <div><p className="eyebrow">CAUSAL REGRESSION DEBUGGER</p><h1>AI Flight Recorder</h1></div>
-      <div className="system-state"><span className="pulse" /> Local evidence store</div>
+  if (session.isLoading) return <div className="boot-screen" role="status"><BrandMark /><span>Connecting to recorded evidence…</span></div>;
+  const incompatible = session.data && !supportedService(session.data.service_version);
+  if (session.error || incompatible || !session.data?.connected || (!session.data.scopes.includes("read") && !session.data.scopes.includes("admin"))) {
+    const error = incompatible ? new APIError(426, "unsupported_version", "This service version is not supported.", "Connect to a Flight Recorder service with API major version 1.") : session.error;
+    return <ConnectionScreen error={error} />;
+  }
+
+  function disconnect() {
+    connection.disconnect();
+    client.clear();
+    navigate("/runs", true);
+  }
+  function toggleDensity() {
+    const next = density === "comfortable" ? "compact" : "comfortable";
+    localStorage.setItem("flight_density", next);
+    setDensity(next);
+  }
+
+  return <div className={`app-shell density-${density}`}>
+    <a className="skip-link" href="#main-content">Skip to investigation</a>
+    <header className="app-header">
+      <button className="brand-button" onClick={() => navigate("/runs")} aria-label="AI Flight Recorder runs"><BrandMark /><span><strong>AI Flight Recorder</strong><small>Investigation workspace</small></span></button>
+      <nav aria-label="Primary navigation"><button className={route.kind === "runs" || route.kind === "run" ? "active" : ""} onClick={() => navigate("/runs")}>Runs</button><button className={route.kind === "record" ? "active" : ""} onClick={() => navigate("/record")}>Add run</button><button className={route.kind === "jobs" || route.kind === "job" ? "active" : ""} onClick={() => navigate("/jobs")}>Replays</button></nav>
+      <div className="header-actions"><span className="connection-state"><i />Connected · {session.data.scopes.join(", ")}</span><button className="icon-button" onClick={toggleDensity} title={`Use ${density === "comfortable" ? "compact" : "comfortable"} density`} aria-label="Toggle display density">{density === "comfortable" ? "Compact" : "Comfortable"}</button><button className="icon-button" onClick={disconnect}>Disconnect</button></div>
     </header>
-    <main>
-      <section className="hero">
-        <div><p className="kicker">INCIDENT WORKSPACE</p><h2>Find where the trajectory first changed.</h2><p>Inspect immutable evidence, replay readiness, and logical execution paths without invoking application code.</p></div>
-        <div className="hero-stat"><strong>{ready.length}</strong><span>recorded capsules</span></div>
-      </section>
-	  <form className="job-locator" aria-label="Track replay job" onSubmit={event => {event.preventDefault(); const id = jobInput.trim(); setTrackedJob(id); if (id) history.pushState({}, "", `/jobs/${encodeURIComponent(id)}`);}}>
-		<label htmlFor="job-id">Replay job</label><input id="job-id" value={jobInput} onChange={event => setJobInput(event.target.value)} placeholder="Paste a job UUID to inspect progress" /><button type="submit">Track progress</button>
-	  </form>
-	  {trackedJob && <JobProgress id={trackedJob} />}
-      <section className="workspace">
-        <aside className="capsule-list" aria-label="Run Capsules">
-          <div className="section-heading"><h3>Run Capsules</h3><button onClick={() => capsules.refetch()}>Refresh</button></div>
-          {capsules.isLoading && <p className="muted">Loading evidence…</p>}
-          {capsules.error && <ErrorPanel message={capsules.error.message} />}
-          {!capsules.isLoading && ready.length === 0 && <EmptyState />}
-		  {ready.map(item => <CapsuleCard key={item.capsule_id} capsule={item} active={item.capsule_id === selectedID} onClick={() => {setSelectedID(item.capsule_id); history.pushState({}, "", `/capsules/${encodeURIComponent(item.capsule_id)}`);}} />)}
-        </aside>
-        <section className="evidence" aria-live="polite">
-          {!selectedID && <div className="evidence-empty"><div className="radar" /><h3>Select a capsule</h3><p>Playback executes nothing and makes no outbound requests.</p></div>}
-	          {selected.isLoading && <p className="muted">Verifying the manifest and inspecting recorded payloads…</p>}
-	          {selected.error && <ErrorPanel message={selected.error.message} />}
-			  {selected.data && <CapsuleDetail playback={selected.data} candidates={ready} />}
-        </section>
-      </section>
+    <main id="main-content" tabIndex={-1}>
+      {route.kind === "record" && <RecordWorkspace scopes={session.data.scopes} navigate={navigate} />}
+      {(route.kind === "runs" || route.kind === "run") && <RunsExperience route={route} navigate={navigate} />}
+      {(route.kind === "jobs" || route.kind === "job") && <JobsExperience route={route} navigate={navigate} />}
     </main>
   </div>;
 }
-
-function CapsuleCard({capsule, active, onClick}: {capsule: CapsuleSummary; active: boolean; onClick: () => void}) {
-  const blocked = Object.values(capsule.completeness).filter(item => item.state === "blocked").length;
-  return <button className={`capsule-card ${active ? "active" : ""}`} onClick={onClick} aria-pressed={active}>
-    <span className="card-top"><span className={`status ${capsule.terminal_status}`}>{capsule.terminal_status}</span><time>{new Date(capsule.start_time).toLocaleString()}</time></span>
-    <strong>{capsule.service_name || "unnamed service"}</strong><code>{capsule.capsule_id.slice(0, 20)}…</code>
-    <span className="card-bottom"><span>{capsule.project_id || "default"}</span><span>{blocked ? `${blocked} blocked modes` : "replay evidence ready"}</span></span>
-  </button>;
-}
-
-function JobProgress({id}: {id: string}) {
-	const job = useQuery({queryKey: ["job", id], queryFn: () => api.job(id), refetchInterval: query => terminal((query.state.data as Job | undefined)?.state) ? false : 1000});
-	if (job.error) return <ErrorPanel message={job.error.message} />;
-	if (!job.data) return <section className="job-progress"><p className="muted">Loading durable job state…</p></section>;
-	const progress = job.data.state === "queued" ? 15 : job.data.state === "running" ? 58 : 100;
-	return <section className={`job-progress ${job.data.state}`} aria-label="Replay job progress"><div><p className="eyebrow">JOB {id.slice(0, 12)}</p><strong>{job.data.state.replace("_", " ")}</strong>{job.data.error && <small>{job.data.error.code}: {job.data.error.message}</small>}</div><div className="progress-track" aria-label={`${progress}%`}><span style={{width: `${progress}%`}} /></div></section>;
-}
-
-function terminal(state?: Job["state"]) { return state === "completed" || state === "failed" || state === "blocked" || state === "inconclusive"; }
-
-function EmptyState() { return <div className="empty"><span>00</span><p>No capsules recorded yet.</p><code>flight record -- &lt;command&gt;</code></div>; }
-function ErrorPanel({message}: {message: string}) { return <div role="alert" className="error-panel"><strong>Evidence unavailable</strong><p>{message}</p></div>; }

@@ -5,14 +5,28 @@ info:
 servers:
   - url: http://127.0.0.1:7777/api/v1
 paths:
+  /session:
+    get:
+      operationId: inspectSession
+      security: []
+      responses:
+        '200': {description: Authentication mode and current session capabilities, content: {application/json: {schema: {$ref: '#/components/schemas/SessionInfo'}}}}
   /capsules:
     get:
       operationId: listCapsules
       parameters:
         - {name: project, in: query, schema: {type: string}}
+        - {name: service, in: query, schema: {type: string}}
+        - {name: search, in: query, schema: {type: string}}
+        - {name: outcome, in: query, schema: {type: string}}
+        - {name: readiness, in: query, schema: {enum: [ready, incomplete, blocked, not_applicable]}}
+        - {name: after, in: query, schema: {type: string, format: date-time}}
+        - {name: before, in: query, schema: {type: string, format: date-time}}
+        - {name: order, in: query, schema: {enum: [newest, attention]}}
+        - {name: cursor, in: query, schema: {type: string}}
         - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 500}}
       responses:
-        '200': {description: Capsule summaries, content: {application/json: {schema: {type: object, properties: {items: {type: array, items: {$ref: '#/components/schemas/CapsuleSummary'}}}}}}}
+        '200': {description: Filtered recorded-run summaries, content: {application/json: {schema: {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/CapsuleSummary'}}, next_cursor: {type: string}}}}}}
   /capsules/{id}:
     get:
       operationId: getCapsule
@@ -28,7 +42,9 @@ paths:
   /capsules/{id}/playback:
     get:
       operationId: playbackCapsule
-      parameters: [{$ref: '#/components/parameters/CapsuleID'}]
+      parameters:
+        - {$ref: '#/components/parameters/CapsuleID'}
+        - {name: include_previews, in: query, schema: {type: boolean, default: true}}
       responses:
         '200': {description: Manifest-verified recorded evidence without application execution, content: {application/json: {schema: {$ref: '#/components/schemas/Playback'}}}}
   /capsules/{id}/payloads/{digest}:
@@ -75,12 +91,24 @@ paths:
       parameters: [{$ref: '#/components/parameters/JobID'}]
       responses:
         '200': {description: Job state, content: {application/json: {schema: {$ref: '#/components/schemas/Job'}}}}
+  /jobs:
+    get:
+      operationId: listJobs
+      parameters:
+        - {name: source_capsule_id, in: query, schema: {type: string}}
+        - {name: state, in: query, schema: {enum: [queued, running, completed, failed, blocked, inconclusive]}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 500}}
+      responses:
+        '200': {description: Recent replay jobs, content: {application/json: {schema: {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/JobSummary'}}}}}}}
   /jobs/{id}/events:
     get:
       operationId: streamJobEvents
-      parameters: [{$ref: '#/components/parameters/JobID'}]
+      parameters:
+        - {$ref: '#/components/parameters/JobID'}
+        - {name: format, in: query, schema: {enum: [json]}}
+        - {name: after, in: query, schema: {type: integer, minimum: 0}}
       responses:
-        '200': {description: Resumable SSE job progress, content: {text/event-stream: {schema: {type: string}}}}
+        '200': {description: Resumable job progress, content: {text/event-stream: {schema: {type: string}}, application/json: {schema: {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/JobEvent'}}}}}}}
   /evaluators/validate:
     post:
       operationId: validateEvaluator
@@ -137,6 +165,16 @@ components:
     JobID: {name: id, in: path, required: true, schema: {type: string, format: uuid}}
     TokenID: {name: id, in: path, required: true, schema: {type: string, format: uuid}}
   schemas:
+    SessionInfo:
+      type: object
+      required: [schema_version, service_version, auth_mode, connected, local_mode_available, scopes]
+      properties:
+        schema_version: {type: string}
+        service_version: {type: string}
+        auth_mode: {enum: [token, local_bypass]}
+        connected: {type: boolean}
+        local_mode_available: {type: boolean}
+        scopes: {type: array, items: {enum: [ingest, read, replay, admin]}}
     RunCapsule: {$ref: '../schemas/run-capsule.schema.json'}
     Playback: {$ref: '../schemas/playback.schema.json'}
     CapsuleCompleteness: {$ref: '../schemas/capsule-completeness.schema.json'}
@@ -160,6 +198,44 @@ components:
         repetitions: {type: integer, minimum: 1, maximum: 50}
         pass_threshold: {type: number, minimum: 0, maximum: 1}
         environment: {type: array, items: {type: string}}
+        overrides:
+          type: array
+          maxItems: 1
+          items: {$ref: '#/components/schemas/ReplayOverride'}
+    ReplayOverride:
+      type: object
+      required: [boundary_id, target, value]
+      properties:
+        boundary_id: {type: string, minLength: 1}
+        target: {enum: [request, response]}
+        value: true
+      additionalProperties: false
+    ReplayOverrideResult:
+      type: object
+      required: [boundary_id, target, applied, message]
+      properties:
+        boundary_id: {type: string}
+        target: {enum: [request, response]}
+        applied: {type: boolean}
+        message: {type: string}
+      additionalProperties: false
+    ReplayJobResult:
+      type: object
+      required: [source_capsule_id, candidate_capsule_id, exit_code, duration_ms, outcome, trials]
+      properties:
+        source_capsule_id: {type: string}
+        candidate_capsule_id: {type: string}
+        exit_code: {type: integer}
+        duration_ms: {type: integer}
+        candidate_image: {type: string}
+        candidate_source_digest: {type: string}
+        substitutions: {type: array, items: {type: string}}
+        live_boundaries: {type: array, items: {type: string}}
+        outcome: {type: string}
+        trials: {type: array, items: {type: object, additionalProperties: true}}
+        overrides: {type: array, items: {$ref: '#/components/schemas/ReplayOverride'}}
+        override_results: {type: array, items: {$ref: '#/components/schemas/ReplayOverrideResult'}}
+      additionalProperties: false
     Job:
       type: object
       required: [id, kind, state, request, created_at, updated_at]
@@ -168,22 +244,55 @@ components:
         kind: {type: string}
         state: {enum: [queued, running, completed, failed, blocked, inconclusive]}
         request: {type: object, additionalProperties: true}
-        result: {type: object, additionalProperties: true}
+        result:
+          oneOf:
+            - {$ref: '#/components/schemas/ReplayJobResult'}
+            - {type: object, additionalProperties: true}
         error: {$ref: '#/components/schemas/Error'}
         lease_owner: {type: string}
         lease_expires_at: {type: string, format: date-time}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
+    JobSummary:
+      type: object
+      required: [id, kind, state, created_at, updated_at]
+      properties:
+        id: {type: string, format: uuid}
+        kind: {type: string}
+        state: {enum: [queued, running, completed, failed, blocked, inconclusive]}
+        source_capsule_id: {type: string}
+        candidate_capsule_id: {type: string}
+        outcome: {type: string}
+        error: {$ref: '#/components/schemas/Error'}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    JobEvent:
+      type: object
+      required: [sequence, job_id, type, time]
+      properties:
+        sequence: {type: integer}
+        job_id: {type: string, format: uuid}
+        type: {type: string}
+        data: {type: object, additionalProperties: true}
+        time: {type: string, format: date-time}
     CapsuleSummary:
       type: object
-      required: [capsule_id, trace_id, project_id, service_name, start_time, terminal_status, completeness]
+      required: [capsule_id, trace_id, project_id, service_name, start_time, end_time, duration_ms, terminal_status, replay_readiness, evidence_warning_count, candidate_replay_count, completeness]
       properties:
         capsule_id: {type: string}
+        source_capsule_id: {type: string}
         trace_id: {type: string}
         project_id: {type: string}
         service_name: {type: string}
         start_time: {type: string, format: date-time}
+        end_time: {type: string, format: date-time}
+        duration_ms: {type: integer, minimum: 0}
         terminal_status: {type: string}
+        failure_operation: {type: string}
+        replay_readiness: {enum: [ready, incomplete, blocked, not_applicable]}
+        evidence_warning_count: {type: integer, minimum: 0}
+        candidate_replay_count: {type: integer, minimum: 0}
+        requested_model: {type: string}
         completeness: {type: object, additionalProperties: {$ref: '../schemas/completeness-report.schema.json'}}
     RevisionEvaluation:
       type: object

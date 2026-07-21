@@ -169,7 +169,7 @@ assert job["request"]["plan"]["plan_digest"].startswith("sha256:"), job["request
 result = job["result"]
 assert result["source_capsule_id"] == sys.argv[2], result
 assert result["candidate_image"] == sys.argv[3], result
-substituted = ["retriever.policy", "mcp.policy", "tool.eligibility", "api.policy"]
+substituted = ["api.policy", "mcp.policy", "retriever.policy", "tool.eligibility"]
 assert result["substitutions"] == substituted, result
 assert result["live_boundaries"] == ["llm.answer"], result
 assert result["outcome"] == "exact", result
@@ -179,12 +179,16 @@ events = []
 for line in open(sys.argv[5]):
     if line.startswith("data: "):
         events.append(json.loads(line.removeprefix("data: ")))
-assert len(events) == 3, events
-assert events[0]["plan_digest"].startswith("sha256:"), events[0]
-assert events[0]["substitutions"] == substituted, events[0]
-assert events[0]["live_boundaries"] == ["llm.answer"], events[0]
-assert events[1]["outcome"] == "exact", events[1]
-assert events[2]["outcome"] == "exact", events[2]
+domain_events = [event for event in events if "stage" not in event]
+stage_events = [event for event in events if "stage" in event]
+assert len(domain_events) == 3, events
+assert domain_events[0]["plan_digest"].startswith("sha256:"), domain_events[0]
+assert domain_events[0]["substitutions"] == substituted, domain_events[0]
+assert domain_events[0]["live_boundaries"] == ["llm.answer"], domain_events[0]
+assert domain_events[1]["outcome"] == "exact", domain_events[1]
+assert domain_events[2]["outcome"] == "exact", domain_events[2]
+required_stages = {"preflight", "preparing_candidate", "building_image", "starting_isolated_application", "replaying_recorded_dependencies", "capturing_candidate", "comparing_executions", "complete"}
+assert required_stages.issubset({event["stage"] for event in stage_events}), stage_events
 candidate = result["candidate_capsule_id"]
 assert result["trials"][0]["candidate_capsule_id"] == candidate, result
 print(candidate)
@@ -234,7 +238,7 @@ assert job["request"]["allowed_hosts"] == [], job["request"]
 assert job["request"]["plan"]["substitute_llm"] is True, job["request"]
 result = job["result"]
 assert result["source_capsule_id"] == sys.argv[2], result
-assert result["substitutions"] == ["retriever.policy", "mcp.policy", "tool.eligibility", "api.policy", "llm.answer"], result
+assert result["substitutions"] == ["api.policy", "llm.answer", "mcp.policy", "retriever.policy", "tool.eligibility"], result
 assert result.get("live_boundaries", []) == [], result
 assert result["outcome"] == "exact", result
 assert result["exit_code"] == 0, result
@@ -274,7 +278,7 @@ assert job["error"]["code"] == "build", job
 result = job["result"]
 assert result["exit_code"] == 17, result
 assert result["outcome"] == "divergent", result
-assert result["substitutions"] == ["retriever.policy", "mcp.policy", "tool.eligibility", "api.policy"], result
+assert result["substitutions"] == ["api.policy", "mcp.policy", "retriever.policy", "tool.eligibility"], result
 assert result["live_boundaries"] == ["llm.answer"], result
 assert len(result["trials"]) == 1 and result["trials"][0]["exit_code"] == 17, result
 print(result["candidate_capsule_id"])

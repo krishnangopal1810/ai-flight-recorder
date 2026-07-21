@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import os
 import sys
@@ -27,7 +28,7 @@ _occurrences: dict[str, int] = {}
 def boundary(
     logical_key: str,
     request: Any,
-    call: Callable[[], T],
+    call: Callable[..., T],
     *,
     boundary_class: str,
     side_effect: str = "unknown",
@@ -37,8 +38,11 @@ def boundary(
     ignore_paths: tuple[str, ...] = (),
 ) -> T:
     plan = _load_plan()
-    request_digest = _safe_digest(request, ignore_paths, plan is not None)
     occurrence = _next_occurrence(logical_key, boundary_class, parent_logical_key)
+    effective_request, request_overridden = _effective_request(
+        plan, logical_key, boundary_class, parent_logical_key, occurrence, request
+    )
+    request_digest = _safe_digest(effective_request, ignore_paths, plan is not None)
     _annotate(
         logical_key,
         boundary_class,
@@ -47,11 +51,11 @@ def boundary(
         request_digest,
         sandbox,
         parent_logical_key,
-        request,
+        effective_request,
         ignore_paths,
     )
     if plan is None:
-        response = call()
+        response = _invoke(call, effective_request, False)
         _capture_response(response)
         return response
     match = _match(
@@ -66,7 +70,7 @@ def boundary(
         _capture_response(recorded_response)
         return recorded_response  # type: ignore[return-value]
     if replay_policy == "live" and _live_allowed(plan, logical_key):
-        response = call()
+        response = _invoke(call, effective_request, request_overridden)
         _capture_response(response)
         return response
     raise BoundaryError(
@@ -77,7 +81,7 @@ def boundary(
 async def boundary_async(
     logical_key: str,
     request: Any,
-    call: Callable[[], Awaitable[T]],
+    call: Callable[..., Awaitable[T]],
     *,
     boundary_class: str,
     side_effect: str = "unknown",
@@ -87,8 +91,11 @@ async def boundary_async(
     ignore_paths: tuple[str, ...] = (),
 ) -> T:
     plan = _load_plan()
-    request_digest = _safe_digest(request, ignore_paths, plan is not None)
     occurrence = _next_occurrence(logical_key, boundary_class, parent_logical_key)
+    effective_request, request_overridden = _effective_request(
+        plan, logical_key, boundary_class, parent_logical_key, occurrence, request
+    )
+    request_digest = _safe_digest(effective_request, ignore_paths, plan is not None)
     _annotate(
         logical_key,
         boundary_class,
@@ -97,11 +104,11 @@ async def boundary_async(
         request_digest,
         sandbox,
         parent_logical_key,
-        request,
+        effective_request,
         ignore_paths,
     )
     if plan is None:
-        response = await call()
+        response = await _invoke(call, effective_request, False)
         _capture_response(response)
         return response
     match = _match(
@@ -116,7 +123,7 @@ async def boundary_async(
         _capture_response(recorded_response)
         return recorded_response  # type: ignore[return-value]
     if replay_policy == "live" and _live_allowed(plan, logical_key):
-        response = await call()
+        response = await _invoke(call, effective_request, request_overridden)
         _capture_response(response)
         return response
     raise BoundaryError(
@@ -248,6 +255,47 @@ def _match(
     if len(exact) > 1 or len(candidates) > 1:
         raise BoundaryError(f"unmatched_boundary: ambiguous replay match for {logical_key}")
     return None
+
+
+def _effective_request(
+    plan: Mapping[str, Any] | None,
+    logical_key: str,
+    boundary_class: str,
+    parent_logical_key: str | None,
+    occurrence: int,
+    request: Any,
+) -> tuple[Any, bool]:
+    if plan is None:
+        return request, False
+    candidates = [
+        item
+        for item in plan.get("boundaries", [])
+        if item.get("logical_key") == logical_key
+        and item.get("boundary_class") == boundary_class
+        and item.get("parent_logical_key", "") == (parent_logical_key or "")
+        and item.get("occurrence", 0) == occurrence
+        and item.get("override_target") == "request"
+        and "request_override" in item
+    ]
+    if len(candidates) > 1:
+        raise BoundaryError(f"unmatched_boundary: ambiguous replay override for {logical_key}")
+    if not candidates:
+        return request, False
+    return candidates[0]["request_override"], True
+
+
+def _invoke(call: Callable[..., T], request: Any, override_required: bool) -> T:
+    try:
+        accepts_request = len(inspect.signature(call).parameters) > 0
+    except (TypeError, ValueError):
+        accepts_request = False
+    if accepts_request:
+        return call(request)
+    if override_required:
+        raise BoundaryError(
+            "unsafe_replay: model input override requires a request-aware boundary callback"
+        )
+    return call()
 
 
 def _live_allowed(plan: Mapping[str, Any], logical_key: str) -> bool:

@@ -320,6 +320,25 @@ func (s *CapsuleService) QuarantineDiagnostic(ctx context.Context, reason, trace
 	return s.repository.PutQuarantine(ctx, repository.QuarantineRecord{ID: uuid.NewString(), Reason: reason, Safe: map[string]any{"trace_id_hash": DigestBytes([]byte(traceID)), "operation_count": operationCount}, CreatedAt: s.clock()})
 }
 
+func (s *CapsuleService) PrepareReplayOverride(raw json.RawMessage) (json.RawMessage, error) {
+	result, err := s.policy.ApplyPayload("replay.override", "replay_override", "application/json", raw)
+	if err != nil {
+		return nil, err
+	}
+	if result.Omitted || result.Truncated || policyCount(result.Redactions)+policyCount(result.Exclusions)+policyCount(result.Truncations) > 0 {
+		return nil, types.NewError(types.ErrValidation, "replay override contains policy-restricted content", "remove or replace the restricted value before replay", nil)
+	}
+	return json.RawMessage(result.Data), nil
+}
+
+func policyCount(values map[string]int) int {
+	total := 0
+	for _, value := range values {
+		total += value
+	}
+	return total
+}
+
 func (s *CapsuleService) capturePayload(name, artifactClass string, raw []byte, mediaType string) (types.PayloadRef, []byte, PolicyResult, error) {
 	if isJSONMediaType(mediaType) && !json.Valid(raw) {
 		return types.PayloadRef{MediaType: mediaType, Size: int64(len(raw)), State: types.PayloadStateOmitted, Reason: types.OmissionSerialization}, nil, PolicyResult{}, nil

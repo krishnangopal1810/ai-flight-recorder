@@ -27,6 +27,21 @@ func TestPolicyRedactsSecretSelectedByPathBeforePersistence(t *testing.T) {
 	}
 }
 
+func TestReplayOverrideIsRejectedWhenCapturePolicyWouldChangeIt(t *testing.T) {
+	engine, err := NewPolicyEngine(config.CapturePolicy{Version: "1", Mode: "strict", MaxFieldSize: 1024, Rules: []config.PolicyRule{{Name: "secret", Path: "*", Pattern: `AFR_SECRET_[A-Z0-9]+`, Action: "redact"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	capsules := NewCapsuleService(nil, engine)
+	if _, err := capsules.PrepareReplayOverride(json.RawMessage(`{"token":"AFR_SECRET_123"}`)); err == nil {
+		t.Fatal("policy-changing replay override was accepted")
+	}
+	prepared, err := capsules.PrepareReplayOverride(json.RawMessage(`{"decision":"approve"}`))
+	if err != nil || string(prepared) != `{"decision":"approve"}` {
+		t.Fatalf("safe replay override = %s, %v", prepared, err)
+	}
+}
+
 func TestAFRSEC004ProjectRetentionOverridesDefault(t *testing.T) {
 	engine, err := NewPolicyEngine(config.CapturePolicy{Version: "1", Mode: "strict", MaxFieldSize: 1024, DefaultRetention: 30 * 24 * time.Hour, ProjectRetention: map[string]time.Duration{"short-lived": time.Hour, "held": 0}})
 	if err != nil {

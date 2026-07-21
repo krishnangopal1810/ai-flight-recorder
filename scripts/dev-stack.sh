@@ -25,9 +25,11 @@ case "$action" in
       fi
       sleep 2
     done
+    "$FLIGHT_REPO_ROOT/scripts/investigation-demo.sh" seed
     ;;
   down)
     docker compose -f deploy/docker-compose.yml down --volumes --remove-orphans
+    "$FLIGHT_REPO_ROOT/scripts/investigation-demo.sh" cleanup
     ;;
   ps)
     docker compose -f deploy/docker-compose.yml ps

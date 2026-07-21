@@ -163,7 +163,7 @@ assert job["state"] == "completed", job
 assert job["request"]["allowed_hosts"] == [], job["request"]
 result = job["result"]
 assert result["source_capsule_id"] == sys.argv[2], result
-assert result["substitutions"] == ["retriever.policy", "mcp.policy", "tool.eligibility", "api.policy", "llm.answer"], result
+assert result["substitutions"] == ["api.policy", "llm.answer", "mcp.policy", "retriever.policy", "tool.eligibility"], result
 assert result.get("live_boundaries", []) == [], result
 assert result["outcome"] == "exact" and result["exit_code"] == 0, result
 print(result["candidate_capsule_id"])

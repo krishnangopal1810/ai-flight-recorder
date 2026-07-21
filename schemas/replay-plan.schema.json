@@ -21,6 +21,20 @@
     "pass_threshold": {"type": "number", "minimum": 0, "maximum": 1},
     "expected_artifacts": {"type": "array", "items": {"type": "string"}},
 	"environment": {"type": "array", "items": {"type": "string"}},
+    "overrides": {
+      "type": "array",
+      "maxItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["boundary_id", "target", "value"],
+        "properties": {
+          "boundary_id": {"type": "string", "minLength": 1},
+          "target": {"enum": ["request", "response"]},
+          "value": true
+        },
+        "additionalProperties": false
+      }
+    },
     "plan_digest": {"type": "string"}
   },
   "additionalProperties": true
