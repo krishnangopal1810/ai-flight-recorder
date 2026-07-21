@@ -20,4 +20,4 @@
 | AFR-T14 | `TestAFRT14BisectRefusesNonMonotonicClaim`, `TestAFRT14BisectReturnsInconclusiveForFlakyRevision` | Non-monotonic or inconclusive history never yields a false first bad. |
 | AFR-T15 | `TestAFRT15EvaluatorRunsInProviderAndPersistsEvidence` | The same versioned evaluator fails the source, passes the fix, and persists both results. |
 
-Additional gates include property-like canonical identity checks, shared local/hosted repository contracts, OTLP late-span assembly, seeded-secret scans, bundle integrity, Python/TypeScript boundary matching tests, and Playwright playback/divergence/job journeys.
+Additional gates include property-like canonical identity checks, shared local/hosted repository contracts, a complete transport-independent OTLP/OpenInference capsule with malformed-span partial success, OTLP late-span assembly, seeded-secret scans, bundle integrity, Python/TypeScript boundary matching tests, and Playwright playback/divergence/job journeys.

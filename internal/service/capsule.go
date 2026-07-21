@@ -19,6 +19,7 @@ type CaptureOperation struct {
 	Output     []byte
 	OutputType string
 	Boundary   *types.Boundary
+	Evaluation *types.Evaluation
 }
 
 type CaptureRequest struct {
@@ -133,6 +134,24 @@ func (s *CapsuleService) Capture(ctx context.Context, request CaptureRequest) (t
 		}
 		operation = sanitizedOperation
 		capsule.Operations = append(capsule.Operations, operation)
+		if captured.Evaluation != nil {
+			evaluation := *captured.Evaluation
+			if operation.Input != nil {
+				evaluation.Inputs = []types.PayloadRef{*operation.Input}
+			}
+			if operation.Output != nil {
+				evaluation.Evidence = operation.Output
+			}
+			var sanitizedEvaluation types.Evaluation
+			evaluationResult, err := s.sanitizeValue("evaluations.metadata", evaluation, &sanitizedEvaluation)
+			if err != nil {
+				return types.RunCapsule{}, s.policyFailure(ctx, request, err)
+			}
+			mergePolicySummary(&capsule.Privacy, evaluationResult)
+			if !evaluationResult.Omitted {
+				capsule.Evaluations = append(capsule.Evaluations, sanitizedEvaluation)
+			}
+		}
 		if captured.Boundary != nil {
 			boundary := *captured.Boundary
 			occurrenceKey := boundary.ParentLogicalKey + "\x00" + boundary.Class + "\x00" + boundary.LogicalKey

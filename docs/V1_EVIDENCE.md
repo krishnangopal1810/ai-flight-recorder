@@ -4,11 +4,11 @@ This is the requirement-by-requirement completion ledger for the active V1 plan.
 
 | Requirement | Current evidence | Status | Missing proof or behavior |
 |---|---|---:|---|
-| AFR-CAP-001 | `make integration`, capsule and OTLP tests | Partial | One opted-in full reference trace with LLM, retriever, MCP, tool, artifact, evaluation, and verified import |
+| AFR-CAP-001 | `make integration` sends one opted-in reference trace through OTLP/HTTP and gRPC with agent, prompt, retriever, LLM, MCP, tool, and evaluator operations; it proves descendant payloads, four boundaries, an artifact, policy evidence, evaluator payload references, identical transport-independent identity, and verified bundle import | Proven | — |
 | AFR-CAP-002 | `make test`, source identity tests | Partial | Every provenance component, explicit missing states, and comparison changes |
 | AFR-CAP-003 | `make integration`, policy/capture tests | Partial | Full content classes, typed serialization/limit omissions, offline replay |
 | AFR-CAP-004 | `make e2e` proves deterministic compatible-minor bundle round trips, nested unknown-field preservation, identity-stable offline playback, and atomic unsupported-major rejection with no metadata or blobs; `make integration` applies the same preservation contract to SQLite/filesystem and PostgreSQL/S3-compatible storage | Proven | — |
-| AFR-ING-001 | `make integration`, OTLP HTTP/gRPC agent fixture | Partial | All GenAI/OpenInference kinds, convention metadata, malformed mixed batches on both transports |
+| AFR-ING-001 | `make integration` covers OpenInference agent, prompt, retriever, LLM, tool, and evaluator kinds, the Flight MCP extension, OTel GenAI LLM metadata, producer schema URLs, Python/TypeScript convention parity, and mixed valid/malformed partial success over both OTLP/HTTP and gRPC | Proven | — |
 | AFR-ING-002 | `make harness-check` executes equivalent Python and TypeScript standard-OTLP agents, compares their logical capsules, replays both through their native SDKs, and proves a TypeScript metadata failure remains payload-free and nonfatal while marking replay incomplete | Proven | — |
 | AFR-ING-003 | `make test`, completeness unit tests | Partial | Boundary-by-boundary playback/replay/diff/bisect reports through API, CLI, and UI |
 | AFR-SEC-001 | `make security`, local seeded-secret store scan | Partial | Hosted DB/object store, bundles, indexes, logs, metrics, traces, diagnostics, and quarantine scan |
