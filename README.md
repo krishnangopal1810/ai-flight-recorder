@@ -1,41 +1,96 @@
-# AI Flight Recorder
+<h1 align="center">AI Flight Recorder</h1>
 
-AI Flight Recorder captures an agent run as an immutable, policy-safe capsule, plays its evidence back without executing code, and replays a candidate inside an isolated OCI network to identify the first meaningful divergence.
+<h3 align="center">Reproduce the run. Freeze the world. Find the first divergence.</h3>
 
-The V1 repository includes the Go collector/service/CLI, native Python and TypeScript SDKs, React inspector, SQLite/filesystem and PostgreSQL/S3-compatible storage, deterministic bundles, isolated replay, evaluators, and experimental Git bisect.
+<p align="center"><strong>An open-source causal regression debugger for production AI agents.</strong><br />Turn one failed execution into a portable experiment: capture the evidence, replay it with external boundaries frozen, change one variable, and see exactly where the new path splits.</p>
 
-## Quickstart
+<p align="center">
+  <a href="https://github.com/krishnangopal1810/ai-flight-recorder/actions/workflows/verify.yml"><img alt="Verification status" src="https://img.shields.io/github/actions/workflow/status/krishnangopal1810/ai-flight-recorder/verify.yml?branch=main&amp;style=flat-square&amp;label=verify" /></a>
+  <a href="https://github.com/krishnangopal1810/ai-flight-recorder/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/krishnangopal1810/ai-flight-recorder?style=flat-square" /></a>
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-0f6b45?style=flat-square" /></a>
+  <a href="https://opentelemetry.io/"><img alt="OpenTelemetry OTLP" src="https://img.shields.io/badge/OpenTelemetry-OTLP-6a5acd?style=flat-square" /></a>
+</p>
 
-Prerequisites are Go 1.25+, Node.js 22, [uv](https://docs.astral.sh/uv/), Git, and Docker. Podman is supported by the replay runtime when configured, while the bundled development stack uses Docker Compose.
+<p align="center">
+  <a href="#see-it-in-action">Try the real investigation</a> ·
+  <a href="#how-it-works">How it works</a> ·
+  <a href="#more-than-another-trace-viewer">Why it is different</a> ·
+  <a href="#safe-by-construction">Safety model</a> ·
+  <a href="#documentation">Documentation</a>
+</p>
+
+![AI Flight Recorder showing the first meaningful divergence between a failed agent run and a successful controlled replay](docs/assets/inspector-comparison.png)
+
+<p align="center"><sub>The comparison view opens at the first aligned change: the original agent denied an eligible refund; a controlled replay changed one model input, kept recorded dependencies offline, and produced a successful candidate.</sub></p>
+
+## A trace is evidence. A replay is an experiment.
+
+AI agents fail across moving systems: prompts, models, retrieval indexes, tools, MCP servers, feature flags, code, and mutable APIs. By the time you investigate, the world that produced the failure has already changed.
+
+Flight Recorder captures that world as an immutable **Run Capsule**, then lets you ask a much stronger question than “what happened?”
+
+> **If I freeze every recorded dependency and change exactly one thing, does the failure still happen?**
+
+The result is a controlled before/after execution, aligned by logical operation rather than timestamp, with the **first meaningful divergence** surfaced before its downstream effects.
+
+## The debugging loop
+
+1. **Capture a failed run** — ingest OTLP/OpenInference spans plus the provenance, artifacts, boundary responses, and policy needed to investigate it.
+2. **Inspect it safely** — play back recorded evidence without running application code or contacting external systems.
+3. **Change one value** — edit a model input or a recorded model, tool, retriever, API, or MCP response.
+4. **Replay with the world frozen** — run the agent inside OCI isolation while recorded external results are substituted by default.
+5. **Find the split** — align both execution trees and surface the earliest meaningful change, followed by its later effects.
+6. **Keep the fix** — save evaluator evidence for local or CI regression testing, or run the experimental Git bisect workflow.
+
+## See it in action
+
+The fastest path launches the complete stack and records a real investigation. It requires **Go 1.25+**, **Node.js 22**, [**uv**](https://docs.astral.sh/uv/), **Git**, and **Docker**.
 
 ```sh
+git clone https://github.com/krishnangopal1810/ai-flight-recorder.git
+cd ai-flight-recorder
 make bootstrap
-make verify
 make dev-up
 ```
 
-The worktree-local stack starts Flight Recorder, PostgreSQL, MinIO, and deterministic fake dependencies, then runs the instrumented refund-review agent in `examples/investigation-agent`. The agent records an eligible refund that was incorrectly denied, performs a real isolated replay with a policy-grounded prompt, and captures a successful candidate comparison through the normal product APIs. The inspector has no demo mode or example-specific behavior; these runs appear like any other `refund-operations` project. Discover the derived port with `./scripts/dev-stack.sh ps`, then open the mapped HTTP URL. The development bearer token is intentionally fixed and loopback-only:
+The stack starts Flight Recorder, PostgreSQL, MinIO, and deterministic external dependencies. It then runs the instrumented refund-review agent in [`examples/investigation-agent`](examples/investigation-agent), captures an incorrect denial, and creates a successful isolated candidate replay through the normal product APIs.
+
+Find the worktree-specific inspector URL:
+
+```sh
+./scripts/dev-stack.sh ps
+```
+
+Use the mapped HTTP URL and this intentionally fixed, loopback-only development token:
 
 ```text
 frt_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 ```
 
-Query the running system with:
+Then follow the product loop:
+
+**Add a run → Inspect trace → Change one value → Replay pipeline → Compare runs**
+
+When you are done:
 
 ```sh
 make observe QUERY=metrics
-make observe QUERY=traces
-./scripts/dev-stack.sh logs
+make observe QUERY=capsules
+# Then inspect one run:
+./scripts/observe.sh traces <capsule-id>
 make dev-down
 ```
 
-For an embedded local service without Compose:
+<details>
+<summary><strong>Prefer the embedded CLI workflow?</strong></summary>
+
+Start the local service:
 
 ```sh
 go run ./cmd/flight serve
 ```
 
-Then initialize and record a replay-aware application:
+In another terminal, initialize and record a replay-aware application:
 
 ```sh
 go run ./cmd/flight init
@@ -43,17 +98,129 @@ go run ./cmd/flight record -- python app.py
 go run ./cmd/flight capsule list --json
 ```
 
-In the inspector, the workflow is **Add a run → Inspect trace → Change one value → Replay pipeline → Compare runs**. Select a tool or model operation in the trace to edit its recorded output; request-aware model boundaries also allow model-input edits. The replay keeps recorded tools offline and opens the resulting before/after comparison automatically.
+The CLI also supports passive playback, capsule import/export, completeness checks, controlled replay, semantic diff, evaluators, and experimental Git bisect. See the [generated CLI reference](docs/generated/cli.md).
 
-## Repository map
+</details>
 
-- [Product requirements](ai-flight-recorder-prd.md)
-- [Architecture](ARCHITECTURE.md)
-- [Agent map](AGENTS.md)
-- [Documentation index](docs/README.md)
-- [Generated API, schema, CLI, and database references](docs/generated/index.md)
-- [Operations and recovery](docs/OPERATIONS.md)
-- [Release process](docs/RELEASING.md)
-- [AFR acceptance matrix](docs/ACCEPTANCE.md)
+## How it works
 
-`make verify` is the blocking local and CI gate. Generated contracts are checked in; change their source, run `make generate`, and commit the result together.
+```mermaid
+flowchart LR
+    A["Failed agent run"] --> B["Policy-safe Run Capsule"]
+    B --> C["Change one controlled value"]
+    C --> D["OCI-isolated replay"]
+    D --> E["Align logical execution trees"]
+    E --> F["First meaningful divergence"]
+    F --> G["Regression evidence"]
+```
+
+### Run Capsules capture the replayable context
+
+A capsule joins the execution trace with the information that ordinary spans do not reliably preserve:
+
+- source revision, dirty-worktree identity, build, runtime, dependency locks, and feature flags;
+- prompts, model configuration, retrieval evidence, tool and MCP calls, artifacts, and evaluator evidence;
+- canonical boundary identities and recorded responses;
+- the replay entrypoint and explicit side-effect policy;
+- a deterministic, content-addressed manifest that can be exported as a portable `.tar.zst` bundle.
+
+Capsules declare whether they are complete enough for playback, replay, diff, and bisect. Missing evidence becomes a visible blocked state—not an excuse to call a live dependency.
+
+### Controlled replay freezes external boundaries
+
+Replay starts the registered application entrypoint from the beginning. Recorded tool, API, retrieval, MCP, and model results are substituted according to policy. Live reads require an explicit declaration; unknown and mutating boundaries are blocked by default.
+
+### Semantic diff finds where behavior changed
+
+Candidate and recorded runs are aligned as logical execution trees. Flight Recorder separates:
+
+- **Evidence** — immutable facts captured from a run;
+- **Observations** — computed differences between runs;
+- **Hypotheses** — explanations supported by controlled evidence.
+
+It does not turn correlation into a causal claim. It gives you a reproducible experiment and shows you where to look first.
+
+## More than another trace viewer
+
+Flight Recorder is designed to sit beside your observability stack, not replace it. It consumes OpenTelemetry and OpenInference, then adds the executable debugging layer that begins after a trace is captured.
+
+| Your telemetry provides | Flight Recorder adds |
+|---|---|
+| Spans, events, inputs, and outputs | Replay provenance, artifacts, boundary policy, and portable Run Capsules |
+| A historical view of the failure | Passive playback plus controlled full-run re-execution |
+| Timeline or span comparison | Logical-tree alignment and the first meaningful divergence |
+| Incident evidence | Versioned evaluators, CI regression handoff, and experimental revision search |
+
+## Safe by construction
+
+Replaying production failures is powerful enough to be dangerous. The safety model is part of the product, not a deployment footnote.
+
+- **Policy before persistence.** Capture policy runs before durable storage, hashing, indexing, logs, metrics, or quarantine.
+- **Playback executes nothing.** Recorded evidence remains inspectable even when replay workers or providers are unavailable.
+- **No silent live fallback.** Missing or ambiguous replay evidence blocks execution instead of contacting the real dependency.
+- **Side effects are closed by default.** Unknown and mutating boundaries are substituted or blocked unless a sandbox and explicit flag are present.
+- **Replays are isolated.** Application containers run without direct external networking, production credentials, the Docker socket, or host-writable mounts.
+- **Operational telemetry is payload-free.** Capsule prompts, outputs, documents, and tool arguments never become product telemetry.
+- **Damaged evidence fails visibly.** Missing or corrupt payloads remain labelled at their original references while unaffected verified evidence stays available.
+
+Read the full [security invariants](docs/SECURITY.md), [replay-isolation design](docs/design-docs/replay-isolation.md), and [reliability contract](docs/RELIABILITY.md).
+
+## Built for real agent stacks
+
+| Layer | V1 support |
+|---|---|
+| Ingestion | OTLP over HTTP and gRPC, OpenTelemetry, and OpenInference |
+| SDKs | Native Python and TypeScript metadata and controlled-boundary libraries |
+| Interfaces | Go CLI/service, REST, SSE, and a React investigation workspace |
+| Storage | SQLite/filesystem locally; PostgreSQL and S3-compatible object storage for hosted deployments |
+| Replay | Docker or configured Podman OCI runtime with a trusted replay gateway |
+| Portability | Deterministic tar+zstd bundles, canonical JSON, and SHA-256 content identities |
+| Deployment | Local CLI or single-tenant, customer-hosted service; no mandatory vendor cloud |
+
+The inspector uses the generated API client. HTTP handlers, CLI commands, and UI code never access storage directly. See [Architecture](ARCHITECTURE.md) for the domain dependency model and runtime data flow.
+
+## What V1 deliberately does not claim
+
+Flight Recorder creates a controlled experiment; it does not promise universal or bit-for-bit determinism. It does not expose hidden model reasoning, transparently re-run mutating production tools, or prove causality from correlation. Git bisect is experimental, and design-partner validation is still part of the V1 plan.
+
+That honesty matters: a debugging tool should make uncertainty smaller, not hide it.
+
+## Develop and verify
+
+The repository is built for agent-first, evidence-backed development. The most useful commands are:
+
+```sh
+make build          # Go binaries, SDKs, and inspector
+make test           # Fast unit and SDK tests
+make integration    # Storage and API contracts
+make e2e            # Deterministic product journeys
+make security       # Privacy and replay-isolation checks
+make verify         # Every blocking local gate
+```
+
+`make harness-check` proves the complete workflow inside a fresh isolated worktree and retains logs, capsules, replay plans, diffs, screenshots, traces, and video for diagnosis. The [acceptance matrix](docs/ACCEPTANCE.md) maps product requirements to executable evidence.
+
+## Documentation
+
+- [Product requirements](ai-flight-recorder-prd.md) — the user problem, V1 promise, scope, and acceptance scenarios
+- [Architecture](ARCHITECTURE.md) — domains, dependencies, runtime flow, and compatibility model
+- [Security](docs/SECURITY.md) and [Reliability](docs/RELIABILITY.md) — non-negotiable runtime behavior
+- [SDK contract](docs/SDK.md) — Python/TypeScript metadata, boundary matching, and replay semantics
+- [Generated references](docs/generated/index.md) — API, schema, CLI, and database contracts
+- [Operations](docs/OPERATIONS.md) — development stack, observability, backup, and recovery
+- [V1 evidence audit](docs/V1_EVIDENCE.md) — implemented proof and remaining validation gaps
+- [Repository knowledge base](docs/README.md) — the full documentation map
+
+## Help build the debugger AI agents need
+
+AI Flight Recorder is early, ambitious, and MIT licensed. The most valuable contributions start with a concrete failure story: what the agent did, which part of the world had moved by investigation time, and what evidence would have made the incident reproducible.
+
+- Read the [agent map](AGENTS.md) before changing the repository.
+- Open an [issue](https://github.com/krishnangopal1810/ai-flight-recorder/issues) with a failure mode, integration request, or focused proposal.
+- Keep changes vertical: behavior, tests, docs, generated contracts, and observability should move together.
+
+If you have ever lost an afternoon trying to reproduce an agent run that would not fail the same way twice, **star the repository**. It helps other AI engineers find the project—and tells us this problem is worth solving in the open.
+
+## License
+
+[MIT](LICENSE) © 2026 krishnangopal1810
