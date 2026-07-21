@@ -49,6 +49,7 @@ type Repository interface {
 
 	PutJob(context.Context, types.Job) error
 	GetJob(context.Context, string) (types.Job, error)
+	ListJobs(context.Context, int) ([]types.Job, error)
 	ClaimJob(context.Context, string, time.Time) (*types.Job, error)
 	RenewJobLease(context.Context, string, string, time.Time) error
 	UpdateJob(context.Context, types.Job) error

@@ -80,16 +80,6 @@ services:
       timeout: 2s
       retries: 30
 
-  demo-seed:
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile
-    depends_on:
-      flight:
-        condition: service_healthy
-    entrypoint: ["/flight"]
-    command: ["--url", "http://flight:7777", "--token", "frt_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "demo", "seed", "--json"]
-
 volumes:
   postgres: {}
   objects: {}

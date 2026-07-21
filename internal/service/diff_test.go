@@ -37,3 +37,30 @@ func TestAFRT11InternalInstrumentationDoesNotBecomeDivergence(t *testing.T) {
 		t.Fatalf("internal span was treated as meaningful: %#v", result.Observations)
 	}
 }
+
+func TestDiffReportsChangedChildInputBeforeParentOutcome(t *testing.T) {
+	start := time.Unix(100, 0).UTC()
+	baseInput := &types.PayloadRef{Digest: "sha256:base"}
+	candidateInput := &types.PayloadRef{Digest: "sha256:candidate"}
+	baseline := types.RunCapsule{CapsuleID: "base", Operations: []types.Operation{
+		{SpanID: "root", LogicalKey: "agent", Kind: "agent", Name: "run", Status: "error", Sequence: 0, StartTime: start, EndTime: start.Add(3 * time.Second)},
+		{SpanID: "model", ParentSpanID: "root", LogicalKey: "model", Kind: "llm", Name: "decide", Status: "error", Sequence: 1, StartTime: start.Add(time.Second), EndTime: start.Add(2 * time.Second), Input: baseInput},
+	}}
+	candidate := types.RunCapsule{CapsuleID: "candidate", Operations: []types.Operation{
+		{SpanID: "other-root", LogicalKey: "agent", Kind: "agent", Name: "run", Status: "ok", Sequence: 0, StartTime: start, EndTime: start.Add(3 * time.Second)},
+		{SpanID: "other-model", ParentSpanID: "other-root", LogicalKey: "model", Kind: "llm", Name: "decide", Status: "ok", Sequence: 1, StartTime: start.Add(time.Second), EndTime: start.Add(2 * time.Second), Input: candidateInput},
+	}}
+	result := NewDiffService().Compare(baseline, candidate)
+	if result.FirstDivergence == nil || result.FirstDivergence.Path != "operations.model.input_digest" {
+		t.Fatalf("expected the changed model input before downstream outcome changes: %#v", result.FirstDivergence)
+	}
+	if result.FirstDivergence.OperationName != "decide" || result.FirstDivergence.Field != "input_digest" {
+		t.Fatalf("expected a human-readable typed observation: %#v", result.FirstDivergence)
+	}
+	if len(result.FirstDivergence.Evidence) != 2 || result.FirstDivergence.Evidence[0].Payload != baseInput.Digest || result.FirstDivergence.Evidence[1].Payload != candidateInput.Digest {
+		t.Fatalf("expected exact before/after payload references: %#v", result.FirstDivergence.Evidence)
+	}
+	if len(result.Hypotheses) != 0 {
+		t.Fatalf("unvalidated causal speculation should not be generated: %#v", result.Hypotheses)
+	}
+}

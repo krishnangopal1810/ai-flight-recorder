@@ -3,22 +3,28 @@ import {writeFile} from "node:fs/promises";
 
 test.skip(!process.env.FLIGHT_PLAYBACK_E2E || !process.env.FLIGHT_PLAYBACK_CAPSULE_ID, "set the live damaged-playback fixture environment");
 
-test("damaged hosted payloads remain partially inspectable without active execution", async ({page}, testInfo) => {
-  const capsuleID = process.env.FLIGHT_PLAYBACK_CAPSULE_ID!;
+test("damaged evidence remains passive, localized, and partially inspectable", async ({page}, testInfo) => {
+  const runID = process.env.FLIGHT_PLAYBACK_CAPSULE_ID!;
   await page.addInitScript(token => sessionStorage.setItem("flight_token", token), "frt_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
-  await page.goto(`/capsules/${encodeURIComponent(capsuleID)}`);
-  const isolation = page.getByRole("status", {name: "Playback isolation proof"});
-  await expect(isolation).toContainText("0 application processes");
-  await expect(isolation).toContainText("0 outbound requests");
-  const warnings = page.getByRole("alert", {name: "Playback evidence warnings"});
-  await expect(warnings).toContainText("payload_missing");
-  await expect(warnings).toContainText("payload_corrupt");
-  await expect(page.getByRole("group", {name: "playback completeness"})).toContainText("incomplete");
-  await expect(page.getByRole("group", {name: "replay completeness"})).toContainText("blocked");
-  await expect(page.getByRole("tree", {name: "Logical execution tree"})).toContainText("answer-policy");
-  await expect(page.getByRole("region", {name: "Boundary tool.policy"})).toContainText("substitute");
-  await expect(page.getByRole("region", {name: "Artifact evidence"})).toContainText("sensitive-policy");
-  await expect(page.getByRole("region", {name: "Model configuration evidence"})).toBeVisible();
+  await page.goto(`/runs/${encodeURIComponent(runID)}/understand`);
+
+  await expect(page.getByText("Safe to inspect", {exact: true})).toBeVisible();
+  await page.getByText("Technical proof").click();
+  await expect(page.getByText(/0 application processes.*0 outbound requests/i)).toBeVisible();
+  const readiness = page.getByRole("region", {name: "This run can’t be replayed yet"});
+  await expect(readiness.getByRole("listitem")).toHaveCount(2);
+  await expect(readiness.getByText("One required replay detail is missing", {exact: true})).toHaveCount(2);
+  await expect(page.getByRole("tree", {name: "Recorded execution timeline"})).toContainText("answer-policy");
+
+  await page.getByRole("button", {name: /policy.lookup tool/i}).click();
+  await expect(page.getByLabel("policy.lookup details")).toContainText("missing");
+  await expect(page.getByLabel("policy.lookup details")).toContainText("Unaffected evidence remains usable.");
+  await page.getByText("Artifacts", {exact: true}).click();
+  await expect(page.getByText("sensitive-policy")).toBeVisible();
+  await expect(page.getByText("corrupt", {exact: true})).toBeVisible();
+  await page.getByText("Model configuration", {exact: true}).click();
+  await expect(page.getByText("Model configuration", {exact: true})).toBeVisible();
+
   const path = testInfo.outputPath("dom.html");
   await writeFile(path, await page.content());
   await testInfo.attach("dom.html", {path, contentType: "text/html"});

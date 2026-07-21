@@ -4,6 +4,22 @@
  */
 
 export interface paths {
+    "/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["inspectSession"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/capsules": {
         parameters: {
             query?: never;
@@ -180,6 +196,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listJobs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/jobs/{id}/events": {
         parameters: {
             query?: never;
@@ -312,6 +344,15 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        SessionInfo: {
+            schema_version: string;
+            service_version: string;
+            /** @enum {unknown} */
+            auth_mode: "token" | "local_bypass";
+            connected: boolean;
+            local_mode_available: boolean;
+            scopes: ("ingest" | "read" | "replay" | "admin")[];
+        };
         RunCapsule: components["schemas"]["run-capsule.schema"];
         Playback: components["schemas"]["playback.schema"];
         CapsuleCompleteness: components["schemas"]["capsule-completeness.schema"];
@@ -332,6 +373,36 @@ export interface components {
             repetitions?: number;
             pass_threshold?: number;
             environment?: string[];
+            overrides?: components["schemas"]["ReplayOverride"][];
+        };
+        ReplayOverride: {
+            boundary_id: string;
+            /** @enum {unknown} */
+            target: "request" | "response";
+            value: unknown;
+        };
+        ReplayOverrideResult: {
+            boundary_id: string;
+            /** @enum {unknown} */
+            target: "request" | "response";
+            applied: boolean;
+            message: string;
+        };
+        ReplayJobResult: {
+            source_capsule_id: string;
+            candidate_capsule_id: string;
+            exit_code: number;
+            duration_ms: number;
+            candidate_image?: string;
+            candidate_source_digest?: string;
+            substitutions?: string[];
+            live_boundaries?: string[];
+            outcome: string;
+            trials: {
+                [key: string]: unknown;
+            }[];
+            overrides?: components["schemas"]["ReplayOverride"][];
+            override_results?: components["schemas"]["ReplayOverrideResult"][];
         };
         Job: {
             /** Format: uuid */
@@ -342,7 +413,7 @@ export interface components {
             request: {
                 [key: string]: unknown;
             };
-            result?: {
+            result?: components["schemas"]["ReplayJobResult"] | {
                 [key: string]: unknown;
             };
             error?: components["schemas"]["error.schema"];
@@ -354,14 +425,50 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
+        JobSummary: {
+            /** Format: uuid */
+            id: string;
+            kind: string;
+            /** @enum {unknown} */
+            state: "queued" | "running" | "completed" | "failed" | "blocked" | "inconclusive";
+            source_capsule_id?: string;
+            candidate_capsule_id?: string;
+            outcome?: string;
+            error?: components["schemas"]["error.schema"];
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        JobEvent: {
+            sequence: number;
+            /** Format: uuid */
+            job_id: string;
+            type: string;
+            data?: {
+                [key: string]: unknown;
+            };
+            /** Format: date-time */
+            time: string;
+        };
         CapsuleSummary: {
             capsule_id: string;
+            source_capsule_id?: string;
             trace_id: string;
             project_id: string;
             service_name: string;
             /** Format: date-time */
             start_time: string;
+            /** Format: date-time */
+            end_time: string;
+            duration_ms: number;
             terminal_status: string;
+            failure_operation?: string;
+            /** @enum {unknown} */
+            replay_readiness: "ready" | "incomplete" | "blocked" | "not_applicable";
+            evidence_warning_count: number;
+            candidate_replay_count: number;
+            requested_model?: string;
             completeness: {
                 [key: string]: components["schemas"]["completeness-report.schema"];
             };
@@ -840,8 +947,12 @@ export interface components {
         observation: {
             kind: string;
             path: string;
+            operation_name?: string;
+            field?: string;
             before?: unknown;
             after?: unknown;
+            before_value?: unknown;
+            after_value?: unknown;
             rule: string;
             confidence: number;
             evidence: components["schemas"]["evidence"][];
@@ -878,8 +989,12 @@ export interface components {
                 observation: {
                     kind: string;
                     path: string;
+                    operation_name?: string;
+                    field?: string;
                     before?: unknown;
                     after?: unknown;
+                    before_value?: unknown;
+                    after_value?: unknown;
                     rule: string;
                     confidence: number;
                     evidence: components["schemas"]["evidence"][];
@@ -954,6 +1069,12 @@ export interface components {
             pass_threshold: number;
             expected_artifacts?: string[];
             environment?: string[];
+            overrides?: {
+                boundary_id: string;
+                /** @enum {unknown} */
+                target: "request" | "response";
+                value: unknown;
+            }[];
             plan_digest: string;
         } & {
             [key: string]: unknown;
@@ -971,10 +1092,38 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    inspectSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Authentication mode and current session capabilities */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionInfo"];
+                };
+            };
+        };
+    };
     listCapsules: {
         parameters: {
             query?: {
                 project?: string;
+                service?: string;
+                search?: string;
+                outcome?: string;
+                readiness?: "ready" | "incomplete" | "blocked" | "not_applicable";
+                after?: string;
+                before?: string;
+                order?: "newest" | "attention";
+                cursor?: string;
                 limit?: number;
             };
             header?: never;
@@ -983,14 +1132,15 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Capsule summaries */
+            /** @description Filtered recorded-run summaries */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": {
-                        items?: components["schemas"]["CapsuleSummary"][];
+                        items: components["schemas"]["CapsuleSummary"][];
+                        next_cursor?: string;
                     };
                 };
             };
@@ -1042,7 +1192,9 @@ export interface operations {
     };
     playbackCapsule: {
         parameters: {
-            query?: never;
+            query?: {
+                include_previews?: boolean;
+            };
             header?: never;
             path: {
                 id: components["parameters"]["CapsuleID"];
@@ -1226,9 +1378,38 @@ export interface operations {
             };
         };
     };
+    listJobs: {
+        parameters: {
+            query?: {
+                source_capsule_id?: string;
+                state?: "queued" | "running" | "completed" | "failed" | "blocked" | "inconclusive";
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Recent replay jobs */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["JobSummary"][];
+                    };
+                };
+            };
+        };
+    };
     streamJobEvents: {
         parameters: {
-            query?: never;
+            query?: {
+                format?: "json";
+                after?: number;
+            };
             header?: never;
             path: {
                 id: components["parameters"]["JobID"];
@@ -1237,13 +1418,16 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Resumable SSE job progress */
+            /** @description Resumable job progress */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "text/event-stream": string;
+                    "application/json": {
+                        items: components["schemas"]["JobEvent"][];
+                    };
                 };
             };
         };

@@ -79,6 +79,67 @@ def test_substitutes_exact_recorded_boundary(tmp_path, monkeypatch):
     ) == {"temp": 24}
 
 
+def test_model_input_override_is_passed_to_request_aware_live_callback(
+    tmp_path, monkeypatch
+):
+    edited = {"messages": [{"role": "system", "content": "approve eligible refunds"}]}
+    plan = {
+        "live_boundaries": ["llm.decision"],
+        "boundaries": [
+            {
+                "logical_key": "llm.decision",
+                "boundary_class": "llm",
+                "parent_logical_key": "agent.root",
+                "occurrence": 0,
+                "request_digest": digest(edited),
+                "override_target": "request",
+                "request_override": edited,
+            }
+        ],
+    }
+    filename = tmp_path / "plan.json"
+    filename.write_text(json.dumps(plan))
+    monkeypatch.setenv("FLIGHT_REPLAY_PLAN", str(filename))
+    assert boundary(
+        "llm.decision",
+        {"messages": [{"role": "system", "content": "deny"}]},
+        lambda effective_request: {"received": effective_request},
+        boundary_class="llm",
+        side_effect="read_only",
+        replay_policy="live",
+        parent_logical_key="agent.root",
+    ) == {"received": edited}
+
+
+def test_model_input_override_fails_closed_for_legacy_callback(tmp_path, monkeypatch):
+    edited = {"prompt": "changed"}
+    plan = {
+        "live_boundaries": ["llm.decision"],
+        "boundaries": [
+            {
+                "logical_key": "llm.decision",
+                "boundary_class": "llm",
+                "occurrence": 0,
+                "request_digest": digest(edited),
+                "override_target": "request",
+                "request_override": edited,
+            }
+        ],
+    }
+    filename = tmp_path / "plan.json"
+    filename.write_text(json.dumps(plan))
+    monkeypatch.setenv("FLIGHT_REPLAY_PLAN", str(filename))
+    with pytest.raises(BoundaryError, match="request-aware boundary callback"):
+        boundary(
+            "llm.decision",
+            {"prompt": "original"},
+            lambda: {"unexpected": True},
+            boundary_class="llm",
+            side_effect="read_only",
+            replay_policy="live",
+        )
+
+
 def test_json_pointer_ignore_rule_is_deterministic():
     first = {"query": "hello", "request_id": "one"}
     second = {"query": "hello", "request_id": "two"}

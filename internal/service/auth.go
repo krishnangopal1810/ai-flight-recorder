@@ -85,6 +85,17 @@ func (s *AuthService) Authorize(ctx context.Context, value, required string) err
 	return nil
 }
 
+func (s *AuthService) Scopes(ctx context.Context, value string) ([]string, error) {
+	if value == "" {
+		return nil, types.NewError(types.ErrAuthentication, "API token is required", "enter a token with read access", nil)
+	}
+	token, err := s.repository.GetTokenByHash(ctx, tokenHash(value))
+	if err != nil || token.RevokedAt != nil {
+		return nil, types.NewError(types.ErrAuthentication, "invalid or revoked API token", "enter an active token with read access", err)
+	}
+	return append([]string(nil), token.Scopes...), nil
+}
+
 func (s *AuthService) Revoke(ctx context.Context, id string) error {
 	return s.repository.RevokeToken(ctx, id)
 }

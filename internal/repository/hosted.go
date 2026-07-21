@@ -197,7 +197,7 @@ func (r *HostedRepository) GetCapsule(ctx context.Context, id string) (types.Run
 }
 
 func (r *HostedRepository) ListCapsules(ctx context.Context, project string, limit int) ([]types.CapsuleSummary, error) {
-	if limit <= 0 || limit > 500 {
+	if limit <= 0 || limit > 5000 {
 		limit = 100
 	}
 	query, arguments := `SELECT manifest FROM capsules`, []any{}
@@ -221,7 +221,7 @@ func (r *HostedRepository) ListCapsules(ctx context.Context, project string, lim
 		if err := json.Unmarshal(manifest, &capsule); err != nil {
 			return nil, types.NewError(types.ErrStorage, "stored capsule is invalid", "restore a verified backup", err)
 		}
-		result = append(result, types.CapsuleSummary{CapsuleID: capsule.CapsuleID, TraceID: capsule.TraceID, ProjectID: capsule.ProjectID, ServiceName: capsule.ServiceName, StartTime: capsule.StartTime, TerminalStatus: capsule.TerminalStatus, Completeness: capsule.Completeness})
+		result = append(result, summarizeCapsule(capsule))
 	}
 	return result, rows.Err()
 }
@@ -449,6 +449,26 @@ func (r *HostedRepository) PutJob(ctx context.Context, job types.Job) error {
 
 func (r *HostedRepository) GetJob(ctx context.Context, id string) (types.Job, error) {
 	return scanHostedJob(r.db.QueryRow(ctx, `SELECT id,kind,state,request,result,error,lease_owner,lease_expires_at,created_at,updated_at FROM jobs WHERE id=$1`, id))
+}
+
+func (r *HostedRepository) ListJobs(ctx context.Context, limit int) ([]types.Job, error) {
+	if limit <= 0 || limit > 5000 {
+		limit = 100
+	}
+	rows, err := r.db.Query(ctx, `SELECT id,kind,state,request,result,error,lease_owner,lease_expires_at,created_at,updated_at FROM jobs ORDER BY created_at DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, types.NewError(types.ErrStorage, "cannot list jobs", "check PostgreSQL health", err)
+	}
+	defer rows.Close()
+	result := []types.Job{}
+	for rows.Next() {
+		job, scanErr := scanHostedJob(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		result = append(result, job)
+	}
+	return result, rows.Err()
 }
 
 func (r *HostedRepository) ClaimJob(ctx context.Context, owner string, until time.Time) (*types.Job, error) {

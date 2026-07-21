@@ -47,6 +47,24 @@ describe("boundary", () => {
     expect(live).not.toHaveBeenCalled();
   });
 
+  it("passes a model input override to a request-aware live callback", async () => {
+    const edited = {messages: [{role: "system", content: "approve eligible refunds"}]};
+    const directory = mkdtempSync(join(tmpdir(), "flight-sdk-"));
+    const plan = join(directory, "plan.json");
+    writeFileSync(plan, JSON.stringify({live_boundaries: ["llm.decision"], boundaries: [{logical_key: "llm.decision", boundary_class: "llm", parent_logical_key: "agent.root", occurrence: 0, request_digest: testing.digest(edited), override_target: "request", request_override: edited}]}));
+    process.env.FLIGHT_REPLAY_PLAN = plan;
+    await expect(boundary({messages: []}, async effectiveRequest => ({received: effectiveRequest}), {logicalKey: "llm.decision", boundaryClass: "llm", parentLogicalKey: "agent.root", replayPolicy: "live"})).resolves.toEqual({received: edited});
+  });
+
+  it("fails closed when a model input override reaches a legacy callback", async () => {
+    const edited = {prompt: "changed"};
+    const directory = mkdtempSync(join(tmpdir(), "flight-sdk-"));
+    const plan = join(directory, "plan.json");
+    writeFileSync(plan, JSON.stringify({live_boundaries: ["llm.decision"], boundaries: [{logical_key: "llm.decision", boundary_class: "llm", occurrence: 0, request_digest: testing.digest(edited), override_target: "request", request_override: edited}]}));
+    process.env.FLIGHT_REPLAY_PLAN = plan;
+    await expect(boundary({prompt: "original"}, async () => ({unexpected: true}), {logicalKey: "llm.decision", boundaryClass: "llm", replayPolicy: "live"})).rejects.toThrow("request-aware boundary callback");
+  });
+
   it("applies JSON pointer ignore rules before matching", () => {
     expect(testing.digest({query: "hello", request_id: "one"}, ["/request_id"])).toBe(testing.digest({query: "hello", request_id: "two"}, ["/request_id"]));
   });

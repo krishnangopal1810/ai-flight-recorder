@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	"sort"
+	"strings"
+	"time"
 
 	"github.com/krishnangopal1810/ai-flight-recorder/internal/types"
 )
@@ -47,7 +49,15 @@ func (d *DiffService) Compare(baseline, candidate types.RunCapsule) types.DiffRe
 		result.AlignmentConfidence = confidenceTotal / float64(len(result.Alignments))
 	}
 	sort.SliceStable(result.Observations, func(i, j int) bool {
-		return observationSequence(result.Observations[i], baseline, candidate) < observationSequence(result.Observations[j], baseline, candidate)
+		left, right := observationMoment(result.Observations[i], baseline, candidate), observationMoment(result.Observations[j], baseline, candidate)
+		if !left.Equal(right) {
+			return left.Before(right)
+		}
+		leftSequence, rightSequence := observationSequence(result.Observations[i], baseline, candidate), observationSequence(result.Observations[j], baseline, candidate)
+		if leftSequence != rightSequence {
+			return leftSequence < rightSequence
+		}
+		return observationPriority(result.Observations[i]) < observationPriority(result.Observations[j])
 	})
 	if len(result.Observations) > 0 {
 		first := result.Observations[0]
@@ -55,10 +65,50 @@ func (d *DiffService) Compare(baseline, candidate types.RunCapsule) types.DiffRe
 			result.FirstDivergenceKnown = false
 		} else {
 			result.FirstDivergence = &first
-			result.Hypotheses = []types.Hypothesis{{Summary: hypothesisSummary(first), Supporting: first.Evidence, Validated: false}}
 		}
 	}
 	return result
+}
+
+func observationMoment(observation types.Observation, baseline, candidate types.RunCapsule) time.Time {
+	for _, evidence := range observation.Evidence {
+		operations := baseline.Operations
+		if evidence.CapsuleID == candidate.CapsuleID {
+			operations = candidate.Operations
+		}
+		for _, operation := range operations {
+			if operation.SpanID != evidence.SpanID {
+				continue
+			}
+			if strings.HasSuffix(observation.Path, ".status") || strings.HasSuffix(observation.Path, ".output_digest") {
+				if !operation.EndTime.IsZero() {
+					return operation.EndTime
+				}
+			}
+			if !operation.StartTime.IsZero() {
+				return operation.StartTime
+			}
+			return time.Unix(0, int64(operation.Sequence)).UTC()
+		}
+	}
+	return time.Date(9999, time.December, 31, 23, 59, 59, 0, time.UTC)
+}
+
+func observationPriority(observation types.Observation) int {
+	switch {
+	case observation.Kind == "operation_inserted" || observation.Kind == "operation_deleted":
+		return 0
+	case strings.HasSuffix(observation.Path, ".input_digest"):
+		return 1
+	case strings.HasSuffix(observation.Path, ".name") || strings.HasSuffix(observation.Path, ".kind"):
+		return 2
+	case strings.HasSuffix(observation.Path, ".output_digest"):
+		return 3
+	case strings.HasSuffix(observation.Path, ".status"):
+		return 4
+	default:
+		return 5
+	}
 }
 
 type operationMatch struct {
@@ -225,22 +275,30 @@ func compareOperation(baseCapsule, candidateCapsule types.RunCapsule, left, righ
 		if fmt.Sprint(field.before) == fmt.Sprint(field.after) {
 			continue
 		}
+		leftPayload, rightPayload := "", ""
+		if field.name == "input_digest" {
+			leftPayload, rightPayload = payloadDigest(left.Input), payloadDigest(right.Input)
+		}
+		if field.name == "output_digest" {
+			leftPayload, rightPayload = payloadDigest(left.Output), payloadDigest(right.Output)
+		}
 		observations = append(observations, types.Observation{
 			Kind: "field_changed", Path: "operations." + left.SpanID + "." + field.name, Before: field.before, After: field.after,
-			Rule: "normalized_exact", Confidence: confidence,
-			Evidence: []types.EvidenceRef{{CapsuleID: baseCapsule.CapsuleID, SpanID: left.SpanID, Field: field.name, Payload: payloadDigest(left.Input)}, {CapsuleID: candidateCapsule.CapsuleID, SpanID: right.SpanID, Field: field.name, Payload: payloadDigest(right.Input)}},
+			OperationName: left.Name, Field: field.name, Rule: "normalized_exact", Confidence: confidence,
+			Evidence: []types.EvidenceRef{{CapsuleID: baseCapsule.CapsuleID, SpanID: left.SpanID, Field: field.name, Payload: leftPayload}, {CapsuleID: candidateCapsule.CapsuleID, SpanID: right.SpanID, Field: field.name, Payload: rightPayload}},
 		})
 	}
 	return observations
 }
 
 func operationObservation(kind string, baseline, candidate types.RunCapsule, left types.Operation, right *types.Operation, confidence float64) types.Observation {
-	observation := types.Observation{Kind: kind, Rule: "logical_tree", Confidence: confidence}
+	observation := types.Observation{Kind: kind, OperationName: left.Name, Rule: "logical_tree", Confidence: confidence}
 	if right == nil {
 		observation.Path = "operations." + left.SpanID
 		observation.Before = left.Name
 		observation.Evidence = []types.EvidenceRef{{CapsuleID: baseline.CapsuleID, SpanID: left.SpanID}}
 	} else {
+		observation.OperationName = right.Name
 		observation.Path = "operations." + right.SpanID
 		observation.After = right.Name
 		observation.Evidence = []types.EvidenceRef{{CapsuleID: candidate.CapsuleID, SpanID: right.SpanID}}
@@ -271,15 +329,4 @@ func observationSequence(observation types.Observation, baseline, candidate type
 		}
 	}
 	return 1 << 30
-}
-
-func hypothesisSummary(observation types.Observation) string {
-	switch observation.Kind {
-	case "operation_inserted":
-		return "A newly selected operation may explain the downstream trajectory change."
-	case "operation_deleted":
-		return "A previously selected operation is absent from the candidate trajectory."
-	default:
-		return "The earliest observed field change is a candidate source of downstream divergence."
-	}
 }

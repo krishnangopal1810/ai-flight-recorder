@@ -14,7 +14,7 @@ make verify
 make dev-up
 ```
 
-The worktree-local stack starts Flight Recorder, PostgreSQL, MinIO, deterministic fake dependencies, and two demo capsules. Discover its derived port with `./scripts/dev-stack.sh ps`, then open the mapped HTTP URL. The development bearer token is intentionally fixed and loopback-only:
+The worktree-local stack starts Flight Recorder, PostgreSQL, MinIO, and deterministic fake dependencies, then runs the instrumented refund-review agent in `examples/investigation-agent`. The agent records an eligible refund that was incorrectly denied, performs a real isolated replay with a policy-grounded prompt, and captures a successful candidate comparison through the normal product APIs. The inspector has no demo mode or example-specific behavior; these runs appear like any other `refund-operations` project. Discover the derived port with `./scripts/dev-stack.sh ps`, then open the mapped HTTP URL. The development bearer token is intentionally fixed and loopback-only:
 
 ```text
 frt_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
@@ -42,6 +42,8 @@ go run ./cmd/flight init
 go run ./cmd/flight record -- python app.py
 go run ./cmd/flight capsule list --json
 ```
+
+In the inspector, the workflow is **Add a run → Inspect trace → Change one value → Replay pipeline → Compare runs**. Select a tool or model operation in the trace to edit its recorded output; request-aware model boundaries also allow model-input edits. The replay keeps recorded tools offline and opens the resulting before/after comparison automatically.
 
 ## Repository map
 

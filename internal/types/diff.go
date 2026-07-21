@@ -8,13 +8,17 @@ type EvidenceRef struct {
 }
 
 type Observation struct {
-	Kind       string        `json:"kind"`
-	Path       string        `json:"path"`
-	Before     any           `json:"before,omitempty"`
-	After      any           `json:"after,omitempty"`
-	Rule       string        `json:"rule"`
-	Confidence float64       `json:"confidence"`
-	Evidence   []EvidenceRef `json:"evidence"`
+	Kind          string        `json:"kind"`
+	Path          string        `json:"path"`
+	OperationName string        `json:"operation_name,omitempty"`
+	Field         string        `json:"field,omitempty"`
+	Before        any           `json:"before,omitempty"`
+	After         any           `json:"after,omitempty"`
+	BeforeValue   any           `json:"before_value,omitempty"`
+	AfterValue    any           `json:"after_value,omitempty"`
+	Rule          string        `json:"rule"`
+	Confidence    float64       `json:"confidence"`
+	Evidence      []EvidenceRef `json:"evidence"`
 }
 
 type Hypothesis struct {

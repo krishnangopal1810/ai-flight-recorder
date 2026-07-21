@@ -213,13 +213,30 @@ type RunCapsule struct {
 }
 
 type CapsuleSummary struct {
-	CapsuleID      string                  `json:"capsule_id"`
-	TraceID        string                  `json:"trace_id"`
-	ProjectID      string                  `json:"project_id"`
-	ServiceName    string                  `json:"service_name"`
-	StartTime      time.Time               `json:"start_time"`
-	TerminalStatus string                  `json:"terminal_status"`
-	Completeness   map[string]Completeness `json:"completeness"`
+	CapsuleID            string                  `json:"capsule_id"`
+	SourceCapsuleID      string                  `json:"source_capsule_id,omitempty"`
+	TraceID              string                  `json:"trace_id"`
+	ProjectID            string                  `json:"project_id"`
+	ServiceName          string                  `json:"service_name"`
+	StartTime            time.Time               `json:"start_time"`
+	EndTime              time.Time               `json:"end_time"`
+	DurationMillis       int64                   `json:"duration_ms"`
+	TerminalStatus       string                  `json:"terminal_status"`
+	FailureOperation     string                  `json:"failure_operation,omitempty"`
+	ReplayReadiness      CompletenessState       `json:"replay_readiness"`
+	EvidenceWarningCount int                     `json:"evidence_warning_count"`
+	CandidateReplayCount int                     `json:"candidate_replay_count"`
+	RequestedModel       string                  `json:"requested_model,omitempty"`
+	Completeness         map[string]Completeness `json:"completeness"`
+}
+
+type SessionInfo struct {
+	SchemaVersion      string   `json:"schema_version"`
+	ServiceVersion     string   `json:"service_version"`
+	AuthMode           string   `json:"auth_mode"`
+	Connected          bool     `json:"connected"`
+	LocalModeAvailable bool     `json:"local_mode_available"`
+	Scopes             []string `json:"scopes"`
 }
 
 type ReplayPlan struct {
@@ -239,6 +256,7 @@ type ReplayPlan struct {
 	PassThreshold             float64                 `json:"pass_threshold" yaml:"pass_threshold"`
 	ExpectedArtifacts         []string                `json:"expected_artifacts,omitempty" yaml:"expected_artifacts,omitempty"`
 	Environment               []string                `json:"environment,omitempty" yaml:"environment,omitempty"`
+	Overrides                 []ReplayOverride        `json:"overrides,omitempty" yaml:"overrides,omitempty"`
 	PlanDigest                string                  `json:"plan_digest" yaml:"plan_digest"`
 }
 
@@ -272,4 +290,22 @@ type JobEvent struct {
 	Type     string          `json:"type"`
 	Data     json.RawMessage `json:"data,omitempty"`
 	Time     time.Time       `json:"time"`
+}
+
+type JobSummary struct {
+	ID                 string       `json:"id"`
+	Kind               string       `json:"kind"`
+	State              JobState     `json:"state"`
+	SourceCapsuleID    string       `json:"source_capsule_id,omitempty"`
+	CandidateCapsuleID string       `json:"candidate_capsule_id,omitempty"`
+	Outcome            string       `json:"outcome,omitempty"`
+	Error              *FlightError `json:"error,omitempty"`
+	CreatedAt          time.Time    `json:"created_at"`
+	UpdatedAt          time.Time    `json:"updated_at"`
+}
+
+type JobStageEvent struct {
+	Stage   string `json:"stage"`
+	State   string `json:"state"`
+	Message string `json:"message"`
 }

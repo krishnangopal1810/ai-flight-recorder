@@ -74,6 +74,10 @@ func exerciseRepositoryContract(t *testing.T, repo Repository, prefix string) {
 	if err := repo.PutJob(ctx, job); err != nil {
 		t.Fatalf("put job: %v", err)
 	}
+	jobs, err := repo.ListJobs(ctx, 10)
+	if err != nil || len(jobs) != 1 || jobs[0].ID != job.ID || jobs[0].State != types.JobQueued {
+		t.Fatalf("job list: %#v %v", jobs, err)
+	}
 	claimed, err := repo.ClaimJob(ctx, prefix+"-worker", now.Add(time.Minute))
 	if err != nil || claimed == nil || claimed.ID != job.ID || claimed.State != types.JobRunning {
 		t.Fatalf("claim job: %#v %v", claimed, err)

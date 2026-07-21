@@ -44,7 +44,7 @@ build:
 
 test:
 	go test ./...
-	cd sdk/python && uv run ruff check src tests ../../examples/reference-python && uv run mypy src ../../examples/reference-python && uv run pytest
+	cd sdk/python && uv run ruff check src tests ../../examples/reference-python ../../examples/investigation-agent && uv run mypy src ../../examples/reference-python && uv run mypy src ../../examples/investigation-agent && uv run pytest
 	cd sdk/typescript && npm test
 	cd examples/reference-typescript && npm test
 	cd web && npm test

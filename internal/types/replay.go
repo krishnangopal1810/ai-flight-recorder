@@ -3,18 +3,25 @@ package types
 import "encoding/json"
 
 type CreateReplayRequest struct {
-	SourceCapsuleID           string   `json:"source_capsule_id"`
-	Model                     string   `json:"model,omitempty"`
-	Revision                  string   `json:"revision,omitempty"`
-	CandidateImage            string   `json:"candidate_image,omitempty"`
-	CandidateCommit           string   `json:"candidate_commit,omitempty"`
-	CandidateDirtyDigest      string   `json:"candidate_dirty_digest,omitempty"`
-	CandidateSourceDigest     string   `json:"candidate_source_digest,omitempty"`
-	SubstituteLLM             bool     `json:"substitute_llm"`
-	AllowSandboxedSideEffects bool     `json:"allow_sandboxed_side_effects"`
-	Repetitions               int      `json:"repetitions,omitempty"`
-	PassThreshold             float64  `json:"pass_threshold,omitempty"`
-	Environment               []string `json:"environment,omitempty"`
+	SourceCapsuleID           string           `json:"source_capsule_id"`
+	Model                     string           `json:"model,omitempty"`
+	Revision                  string           `json:"revision,omitempty"`
+	CandidateImage            string           `json:"candidate_image,omitempty"`
+	CandidateCommit           string           `json:"candidate_commit,omitempty"`
+	CandidateDirtyDigest      string           `json:"candidate_dirty_digest,omitempty"`
+	CandidateSourceDigest     string           `json:"candidate_source_digest,omitempty"`
+	SubstituteLLM             bool             `json:"substitute_llm"`
+	AllowSandboxedSideEffects bool             `json:"allow_sandboxed_side_effects"`
+	Repetitions               int              `json:"repetitions,omitempty"`
+	PassThreshold             float64          `json:"pass_threshold,omitempty"`
+	Environment               []string         `json:"environment,omitempty"`
+	Overrides                 []ReplayOverride `json:"overrides,omitempty"`
+}
+
+type ReplayOverride struct {
+	BoundaryID string          `json:"boundary_id" yaml:"boundary_id"`
+	Target     string          `json:"target" yaml:"target"`
+	Value      json.RawMessage `json:"value" yaml:"value"`
 }
 
 type BisectRequest struct {
@@ -31,16 +38,25 @@ type ReplayJobRequest struct {
 }
 
 type ReplayJobResult struct {
-	SourceCapsuleID    string        `json:"source_capsule_id"`
-	CandidateCapsuleID string        `json:"candidate_capsule_id"`
-	ExitCode           int           `json:"exit_code"`
-	DurationMillis     int64         `json:"duration_ms"`
-	CandidateImage     string        `json:"candidate_image,omitempty"`
-	CandidateSource    string        `json:"candidate_source_digest,omitempty"`
-	Substitutions      []string      `json:"substitutions,omitempty"`
-	LiveBoundaries     []string      `json:"live_boundaries,omitempty"`
-	Outcome            string        `json:"outcome"`
-	Trials             []ReplayTrial `json:"trials"`
+	SourceCapsuleID    string                 `json:"source_capsule_id"`
+	CandidateCapsuleID string                 `json:"candidate_capsule_id"`
+	ExitCode           int                    `json:"exit_code"`
+	DurationMillis     int64                  `json:"duration_ms"`
+	CandidateImage     string                 `json:"candidate_image,omitempty"`
+	CandidateSource    string                 `json:"candidate_source_digest,omitempty"`
+	Substitutions      []string               `json:"substitutions,omitempty"`
+	LiveBoundaries     []string               `json:"live_boundaries,omitempty"`
+	Outcome            string                 `json:"outcome"`
+	Trials             []ReplayTrial          `json:"trials"`
+	Overrides          []ReplayOverride       `json:"overrides,omitempty"`
+	OverrideResults    []ReplayOverrideResult `json:"override_results,omitempty"`
+}
+
+type ReplayOverrideResult struct {
+	BoundaryID string `json:"boundary_id"`
+	Target     string `json:"target"`
+	Applied    bool   `json:"applied"`
+	Message    string `json:"message"`
 }
 
 type ReplayTrial struct {

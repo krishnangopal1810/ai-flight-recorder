@@ -52,6 +52,7 @@ func NewServer(cfg config.Config, capsules *service.CapsuleService, bundles *ser
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.health)
+	mux.HandleFunc("GET /api/v1/session", s.session)
 	mux.HandleFunc("GET /metrics", s.withScope("admin", s.metrics))
 	mux.HandleFunc("GET /api/v1/capsules", s.withScope("read", s.listCapsules))
 	mux.HandleFunc("GET /api/v1/capsules/{id}", s.withScope("read", s.getCapsule))
@@ -68,6 +69,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/evaluators/{id}", s.withScope("read", s.getEvaluator))
 	mux.HandleFunc("GET /api/v1/capsules/{id}/evaluations", s.withScope("read", s.evaluatorRuns))
 	mux.HandleFunc("GET /api/v1/jobs/{id}", s.withScope("read", s.getJob))
+	mux.HandleFunc("GET /api/v1/jobs", s.withScope("read", s.listJobs))
 	mux.HandleFunc("GET /api/v1/jobs/{id}/events", s.withScope("read", s.jobEvents))
 	mux.HandleFunc("POST /api/v1/tokens", s.withScope("admin", s.createToken))
 	mux.HandleFunc("DELETE /api/v1/tokens/{id}", s.withScope("admin", s.revokeToken))
@@ -119,12 +121,35 @@ func (s *Server) metrics(writer http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) listCapsules(writer http.ResponseWriter, request *http.Request) {
 	limit, _ := strconv.Atoi(request.URL.Query().Get("limit"))
-	items, err := s.capsules.List(request.Context(), request.URL.Query().Get("project"), limit)
+	var after *time.Time
+	if value := request.URL.Query().Get("after"); value != "" {
+		parsed, err := time.Parse(time.RFC3339, value)
+		if err != nil {
+			writeError(writer, types.NewError(types.ErrValidation, "invalid run-list time", "use an RFC 3339 after timestamp", err))
+			return
+		}
+		after = &parsed
+	}
+	var before *time.Time
+	if value := request.URL.Query().Get("before"); value != "" {
+		parsed, err := time.Parse(time.RFC3339, value)
+		if err != nil {
+			writeError(writer, types.NewError(types.ErrValidation, "invalid run-list time", "use an RFC 3339 before timestamp", err))
+			return
+		}
+		before = &parsed
+	}
+	items, err := s.capsules.ListRuns(request.Context(), service.CapsuleListQuery{
+		Project: request.URL.Query().Get("project"), Service: request.URL.Query().Get("service"),
+		Search: request.URL.Query().Get("search"), Outcome: request.URL.Query().Get("outcome"),
+		Readiness: request.URL.Query().Get("readiness"), After: after, Before: before,
+		Order: request.URL.Query().Get("order"), Cursor: request.URL.Query().Get("cursor"), Limit: limit,
+	})
 	if err != nil {
 		writeError(writer, err)
 		return
 	}
-	writeJSON(writer, http.StatusOK, map[string]any{"items": items})
+	writeJSON(writer, http.StatusOK, items)
 }
 
 func (s *Server) getCapsule(writer http.ResponseWriter, request *http.Request) {
@@ -150,6 +175,13 @@ func (s *Server) playback(writer http.ResponseWriter, request *http.Request) {
 	if err != nil {
 		writeError(writer, err)
 		return
+	}
+	if request.URL.Query().Get("include_previews") == "false" {
+		for index := range playback.Payloads {
+			playback.Payloads[index].Preview = ""
+			playback.Payloads[index].PreviewEncoding = ""
+			playback.Payloads[index].PreviewTruncated = false
+		}
 	}
 	writeJSON(writer, http.StatusOK, playback)
 }
@@ -212,7 +244,9 @@ func (s *Server) diffCapsules(writer http.ResponseWriter, request *http.Request)
 		writeError(writer, err)
 		return
 	}
-	writeJSON(writer, http.StatusOK, s.diffs.Compare(baseline, candidate))
+	result := s.diffs.Compare(baseline, candidate)
+	s.hydrateDiffValues(request.Context(), &result)
+	writeJSON(writer, http.StatusOK, result)
 }
 
 func (s *Server) createToken(writer http.ResponseWriter, request *http.Request) {
@@ -346,7 +380,27 @@ func (s *Server) getJob(writer http.ResponseWriter, request *http.Request) {
 	writeJSON(writer, http.StatusOK, job)
 }
 
+func (s *Server) listJobs(writer http.ResponseWriter, request *http.Request) {
+	limit, _ := strconv.Atoi(request.URL.Query().Get("limit"))
+	items, err := s.jobs.List(request.Context(), request.URL.Query().Get("source_capsule_id"), request.URL.Query().Get("state"), limit)
+	if err != nil {
+		writeError(writer, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"items": items})
+}
+
 func (s *Server) jobEvents(writer http.ResponseWriter, request *http.Request) {
+	if request.URL.Query().Get("format") == "json" {
+		after, _ := strconv.ParseInt(request.URL.Query().Get("after"), 10, 64)
+		events, err := s.jobs.Events(request.Context(), request.PathValue("id"), after)
+		if err != nil {
+			writeError(writer, err)
+			return
+		}
+		writeJSON(writer, http.StatusOK, map[string]any{"items": events})
+		return
+	}
 	flusher, ok := writer.(http.Flusher)
 	if !ok {
 		writeError(writer, types.NewError(types.ErrStorage, "event streaming is unavailable", "use GET /api/v1/jobs/{id} polling", nil))
