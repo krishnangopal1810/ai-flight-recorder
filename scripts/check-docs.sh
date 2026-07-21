@@ -59,7 +59,7 @@ for reference in re.findall(r"\$ref:\s*['\"]([^'\"]+\.json)['\"]", source_openap
     if not (Path('api') / reference).resolve().exists():
         missing.append(f'api/openapi.yaml: unresolved schema reference {reference}')
 cli_reference = Path('docs/generated/cli.md').read_text()
-for command in ['capsule import', 'capsule export', 'replay', 'diff', 'evaluator export', 'token revoke', 'bisect', 'demo seed']:
+for command in ['capsule import', 'capsule export', 'capsule completeness', 'replay', 'diff', 'evaluator export', 'token revoke', 'bisect', 'demo seed', 'demo seed-incomplete']:
     if f'flight {command}' not in cli_reference:
         missing.append(f'docs/generated/cli.md: missing public command flight {command}; run make generate')
 for plan in Path('docs/exec-plans/active').glob('*.md'):

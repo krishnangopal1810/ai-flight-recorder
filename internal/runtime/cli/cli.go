@@ -148,6 +148,17 @@ func newCapsule(options *rootOptions) *cobra.Command {
 		}
 		return writeOutput(os.Stdout, capsule, options.json)
 	}}
+	completeness := &cobra.Command{Use: "completeness <capsule-id>", Args: cobra.ExactArgs(1), Short: "Report playback, replay, diff, and bisect prerequisites", RunE: func(_ *cobra.Command, args []string) error {
+		client, err := apiClient(options)
+		if err != nil {
+			return err
+		}
+		report, err := client.Completeness(context.Background(), args[0])
+		if err != nil {
+			return err
+		}
+		return writeOutput(os.Stdout, report, options.json)
+	}}
 	export := &cobra.Command{Use: "export <capsule-id> <file.tar.zst>", Args: cobra.ExactArgs(2), Short: "Export a portable capsule bundle", RunE: func(_ *cobra.Command, args []string) error {
 		client, err := apiClient(options)
 		if err != nil {
@@ -169,7 +180,7 @@ func newCapsule(options *rootOptions) *cobra.Command {
 		}
 		return writeOutput(os.Stdout, capsule, options.json)
 	}}
-	command.AddCommand(list, show, export, importCommand)
+	command.AddCommand(list, show, completeness, export, importCommand)
 	return command
 }
 

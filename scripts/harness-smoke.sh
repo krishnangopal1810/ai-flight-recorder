@@ -147,8 +147,10 @@ failure_classification="product_defect"
   FLIGHT_PLAYWRIGHT_OUTPUT_DIR="$artifact_root/playwright" \
   npx playwright test tests/live-inspector.spec.ts) >"$artifact_root/live-inspector.log" 2>&1 || {
     tail -100 "$artifact_root/live-inspector.log" >&2 || true
-    exit 1
-  }
+  exit 1
+}
+
+run_step completeness ./scripts/completeness-smoke.sh "$artifact_root/completeness"
 
 run_step reference-replay ./scripts/reference-replay-smoke.sh "$artifact_root/reference-replay"
 run_step typescript-reference ./scripts/typescript-reference-smoke.sh \

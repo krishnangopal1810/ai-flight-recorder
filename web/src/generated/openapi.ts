@@ -36,6 +36,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/capsules/{id}/completeness": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getCapsuleCompleteness"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/capsules/{id}/playback": {
         parameters: {
             query?: never;
@@ -297,6 +313,7 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         RunCapsule: components["schemas"]["run-capsule.schema"];
+        CapsuleCompleteness: components["schemas"]["capsule-completeness.schema"];
         ReplayPlan: components["schemas"]["replay-plan.schema"];
         Evaluator: components["schemas"]["evaluator.schema"];
         Diff: components["schemas"]["diff.schema"];
@@ -383,6 +400,13 @@ export interface components {
                 [key: string]: unknown;
             })[];
             ambiguities?: string[];
+            ambiguity_details?: ({
+                code: string;
+                boundary_id?: string;
+                message: string;
+            } & {
+                [key: string]: unknown;
+            })[];
         } & {
             [key: string]: unknown;
         };
@@ -710,6 +734,17 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** Capsule Completeness */
+        "capsule-completeness.schema": {
+            schema_version: string;
+            capsule_id: string;
+            playback: components["schemas"]["completeness-report.schema"];
+            replay: components["schemas"]["completeness-report.schema"];
+            diff: components["schemas"]["completeness-report.schema"];
+            bisect: components["schemas"]["completeness-report.schema"];
+        } & {
+            [key: string]: unknown;
+        };
         evidence: {
             capsule_id: string;
             span_id?: string;
@@ -905,6 +940,28 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["run-capsule.schema"];
+                };
+            };
+        };
+    };
+    getCapsuleCompleteness: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CapsuleID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Independent playback */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["capsule-completeness.schema"];
                 };
             };
         };

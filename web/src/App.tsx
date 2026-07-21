@@ -57,9 +57,12 @@ function CapsuleCard({capsule, active, onClick}: {capsule: CapsuleSummary; activ
 
 function CapsuleDetail({capsule, candidates}: {capsule: Capsule; candidates: CapsuleSummary[]}) {
   const roots = useMemo(() => capsule.operations.filter(operation => !operation.parent_span_id), [capsule]);
+  const completeness = useQuery({queryKey: ["completeness", capsule.capsule_id], queryFn: () => api.completeness(capsule.capsule_id)});
   return <>
     <div className="detail-header"><div><p className="eyebrow">VERIFIED EVIDENCE</p><h3>{capsule.service_name}</h3><code>{capsule.capsule_id}</code></div><span className="integrity">SHA-256 verified</span></div>
-    <div className="completeness-grid">{Object.entries(capsule.completeness).map(([mode, state]) => <CompletenessCard key={mode} mode={mode} value={state} />)}</div>
+    {completeness.isLoading && <p className="muted">Computing mode-specific prerequisites…</p>}
+    {completeness.error && <ErrorPanel message={completeness.error.message} />}
+    {completeness.data && <div className="completeness-grid">{(["playback", "replay", "diff", "bisect"] as const).map(mode => <CompletenessCard key={mode} mode={mode} value={completeness.data[mode]} />)}</div>}
     <div className="evidence-labels"><span className="label evidence-label">Evidence</span><p>Recorded values below are immutable capsule facts.</p></div>
 	<div className="evidence-stats"><span><strong>{capsule.boundaries?.length ?? 0}</strong> boundaries</span><span><strong>{capsule.artifacts?.length ?? 0}</strong> artifacts</span><span><strong>{capsule.integrity.payload_digests.length}</strong> payloads</span><span><strong>{Object.values(capsule.privacy.redactions ?? {}).reduce((sum, count) => sum + count, 0)}</strong> redactions</span></div>
     <div className="tree" role="tree" aria-label="Logical execution tree">{roots.map(root => <OperationNode key={root.span_id} operation={root} operations={capsule.operations} depth={0} />)}</div>
@@ -91,7 +94,12 @@ function JobProgress({id}: {id: string}) {
 function terminal(state?: Job["state"]) { return state === "completed" || state === "failed" || state === "blocked" || state === "inconclusive"; }
 
 function CompletenessCard({mode, value}: {mode: string; value: Completeness}) {
-  return <div className={`completeness ${value.state}`}><span>{mode}</span><strong>{value.state.replace("_", " ")}</strong>{value.missing?.[0] && <small>{value.missing[0].message}</small>}</div>;
+  return <div className={`completeness ${value.state}`} role="group" aria-label={`${mode} completeness`}>
+    <span>{mode}</span><strong>{value.state.replace("_", " ")}</strong>
+    {value.missing && value.missing.length > 0 && <ul className="missing-prerequisites" aria-label={`${mode} missing prerequisites`}>{value.missing.map((item, index) => <li key={`${item.code}-${item.boundary_id ?? "capsule"}-${index}`}><code>{item.boundary_id ?? "capsule"}</code><span>{item.code}</span><small>{item.message}</small></li>)}</ul>}
+    {value.ambiguity_details && value.ambiguity_details.length > 0 && <ul className="ambiguous-prerequisites" aria-label={`${mode} ambiguous prerequisites`}>{value.ambiguity_details.map((item, index) => <li key={`${item.code}-${item.boundary_id ?? "capsule"}-${index}`}><code>{item.boundary_id ?? "capsule"}</code><span>{item.code}</span><small>{item.message}</small></li>)}</ul>}
+    {value.ambiguities && value.ambiguities.length > 0 && <ul className="completeness-ambiguities" aria-label={`${mode} ambiguities`}>{value.ambiguities.map(item => <li key={item}>{item}</li>)}</ul>}
+  </div>;
 }
 
 function OperationNode({operation, operations, depth}: {operation: Operation; operations: Operation[]; depth: number}) {

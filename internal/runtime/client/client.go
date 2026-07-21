@@ -55,6 +55,11 @@ func (c *Client) GetCapsule(ctx context.Context, id string) (types.RunCapsule, e
 	err := c.doJSON(ctx, http.MethodGet, "/api/v1/capsules/"+url.PathEscape(id), nil, &result)
 	return result, err
 }
+func (c *Client) Completeness(ctx context.Context, id string) (types.CapsuleCompleteness, error) {
+	var result types.CapsuleCompleteness
+	err := c.doJSON(ctx, http.MethodGet, "/api/v1/capsules/"+url.PathEscape(id)+"/completeness", nil, &result)
+	return result, err
+}
 func (c *Client) Playback(ctx context.Context, id string) (map[string]any, error) {
 	var result map[string]any
 	err := c.doJSON(ctx, http.MethodGet, "/api/v1/capsules/"+url.PathEscape(id)+"/playback", nil, &result)

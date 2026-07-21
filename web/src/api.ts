@@ -1,6 +1,7 @@
 import type {components} from "./generated/openapi";
 
 export type Completeness = components["schemas"]["completeness-report.schema"];
+export type CapsuleCompleteness = components["schemas"]["CapsuleCompleteness"];
 export type CompletenessState = Completeness["state"];
 export type CapsuleSummary = components["schemas"]["CapsuleSummary"];
 export type Operation = components["schemas"]["operation"];
@@ -38,6 +39,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   async capsules(): Promise<CapsuleSummary[]> { return (await request<{items: CapsuleSummary[]}>("/api/v1/capsules")).items; },
   capsule(id: string): Promise<Capsule> { return request(`/api/v1/capsules/${encodeURIComponent(id)}`); },
+  completeness(id: string): Promise<CapsuleCompleteness> { return request(`/api/v1/capsules/${encodeURIComponent(id)}/completeness`); },
   diff(baseline: string, candidate: string): Promise<DiffResult> { return request("/api/v1/diffs", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({baseline_capsule_id: baseline, candidate_capsule_id: candidate})}); },
   job(id: string): Promise<Job> { return request(`/api/v1/jobs/${encodeURIComponent(id)}`); },
 };

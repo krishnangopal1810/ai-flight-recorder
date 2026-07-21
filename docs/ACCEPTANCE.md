@@ -9,7 +9,7 @@
 | AFR-T03 | `TestAFRT01ThroughT03DiffSurfacesCausalInputDrift/AFR-T03` | Tool schema/request drift is surfaced before the tool failure. |
 | AFR-T04 | `scripts/reference-replay-smoke.sh`, `scripts/typescript-reference-smoke.sh`, `TestAFRT04RecordedExternalResponseIsSubstitutedOffline` | Python and TypeScript recorded responses are substituted; the Python mixed trial permits only the declared model host and both all-substituted trials attach no egress network. |
 | AFR-T05 | `TestAFRT05RepeatedTrialsNeverClaimFalseDeterminism` | Repetitions produce exact, equivalent, divergent, or inconclusive. |
-| AFR-T06 | `TestAFRT06PlaybackSurvivesMissingReplayEvidence` | Playback stays ready while replay names the missing boundary. |
+| AFR-T06 | `scripts/completeness-smoke.sh`, `TestAFRT06PlaybackSurvivesMissingReplayEvidence` | A live missing-tool-response capsule stays playable, blocks replay and bisect with the exact boundary ID through API/CLI/UI, and fails replay preflight without execution. |
 | AFR-T07 | `TestAFRT07MalformedSpanIsIsolatedFromValidTrace` | A malformed span is rejected without discarding valid trace evidence. |
 | AFR-T08 | `TestAFRT08SeededSecretsNeverReachLocalStore` | Policy runs before store, manifest, or quarantine persistence. |
 | AFR-T09 | `TestAFRT09MutatingLiveBoundaryFailsPreflight` | Mutating live boundaries are blocked by default. |

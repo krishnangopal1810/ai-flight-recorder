@@ -101,9 +101,19 @@ func replayRootInput(operations []types.Operation) *types.PayloadRef {
 }
 
 func (s *ReplayService) Preflight(ctx context.Context, source types.RunCapsule, request types.CreateReplayRequest) error {
-	completeness := source.Completeness["replay"]
+	completeness := CompletenessReport(source).Replay
 	if completeness.State != types.CompletenessReady {
-		return &types.FlightError{Code: types.ErrIncompleteCapsule, Message: "capsule is not replay-ready", Remediation: "supply the missing entrypoint, artifacts, or boundary responses", Details: map[string]any{"missing": completeness.Missing}}
+		details := map[string]any{}
+		if len(completeness.Missing) > 0 {
+			details["missing"] = completeness.Missing
+		}
+		if len(completeness.Ambiguities) > 0 {
+			details["ambiguities"] = completeness.Ambiguities
+		}
+		if len(completeness.AmbiguityDetails) > 0 {
+			details["ambiguity_details"] = completeness.AmbiguityDetails
+		}
+		return &types.FlightError{Code: types.ErrIncompleteCapsule, Message: "capsule is not replay-ready", Remediation: "resolve the named missing or ambiguous entrypoint, artifact, or boundary prerequisites", Details: details}
 	}
 	if source.Provenance.Entrypoint == nil || len(source.Provenance.Entrypoint.Command) == 0 {
 		return types.NewError(types.ErrIncompleteCapsule, "replay entrypoint is missing", "register an argv entrypoint in the source execution", nil)
