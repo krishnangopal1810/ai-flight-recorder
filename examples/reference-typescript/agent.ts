@@ -11,11 +11,18 @@ const DIAGNOSTIC_PROJECT_ID = "reference-replay-typescript-diagnostic";
 const SERVICE_NAME = "typescript-reference-agent";
 const ENTRYPOINT = ["node", "/app/dist/agent.js"];
 const RECORDED_POLICY = { rule: "refunds within 30 days" };
+const RECORDED_RETRIEVAL = { documents: [{id: "refund-policy", content: "grounded policy evidence"}] };
+const RECORDED_MCP = { uri: "policy://refund", limit_days: 30 };
+const RECORDED_TOOL = { eligible: true };
+const TOOL_DEFINITIONS = [{type: "function", name: "check_refund_eligibility", description: "Check whether a refund request is within policy"}];
 const MODEL_HOST = "fake-deps";
 const MODEL_ENDPOINT = `http://${MODEL_HOST}:9099/v1/chat/completions`;
 
 interface AgentInput { policy_id: string }
 interface PolicyResponse { rule: string }
+interface RetrievalResponse { documents: Array<{id: string; content: string}> }
+interface MCPResponse { uri: string; limit_days: number }
+interface ToolResponse { eligible: boolean }
 interface ModelResponse { response: { choices: Array<{ message: { content: string } }> } }
 
 function canonical(value: unknown): string {
@@ -62,6 +69,9 @@ async function run(): Promise<number> {
   const tracer = trace.getTracer("ai-flight-recorder.reference-typescript", "1.0");
   let callbackInvoked = false;
   let modelCallbackInvoked = false;
+  let retrievalCallbackInvoked = false;
+  let mcpCallbackInvoked = false;
+  let toolCallbackInvoked = false;
   let exitCode = 0;
 
   await tracer.startActiveSpan("answer-policy", async root => {
@@ -87,6 +97,39 @@ async function run(): Promise<number> {
     if (process.env.FLIGHT_REPLAY_MODEL === "mismatch-request") policyRequest.policy_id = "changed";
 
     try {
+      const retrieved = await tracer.startActiveSpan("policy-retrieval", async span => {
+        span.setAttribute("openinference.span.kind", "RETRIEVER");
+        try {
+          return await boundary<RetrievalResponse>({query: input.policy_id}, async () => {
+            retrievalCallbackInvoked = true;
+            if (process.env.FLIGHT_RECORDING_FIXTURE === "1") return RECORDED_RETRIEVAL;
+            throw new Error("recorded retrieval dependency is unavailable");
+          }, {logicalKey: "retriever.policy", boundaryClass: "retriever", sideEffect: "read_only", replayPolicy: "substitute", parentLogicalKey: "agent.answer"});
+        } finally { span.end(); }
+      });
+
+      const mcpResult = await tracer.startActiveSpan("policy-resource", async span => {
+        span.setAttribute("flight.operation.kind", "mcp");
+        try {
+          return await boundary<MCPResponse>({uri: "policy://refund"}, async () => {
+            mcpCallbackInvoked = true;
+            if (process.env.FLIGHT_RECORDING_FIXTURE === "1") return RECORDED_MCP;
+            throw new Error("recorded MCP dependency is unavailable");
+          }, {logicalKey: "mcp.policy", boundaryClass: "mcp", sideEffect: "read_only", replayPolicy: "substitute", parentLogicalKey: "agent.answer"});
+        } finally { span.end(); }
+      });
+
+      const toolResult = await tracer.startActiveSpan("eligibility-tool", async span => {
+        span.setAttribute("openinference.span.kind", "TOOL");
+        try {
+          return await boundary<ToolResponse>({days_since_purchase: 12, limit_days: 30}, async () => {
+            toolCallbackInvoked = true;
+            if (process.env.FLIGHT_RECORDING_FIXTURE === "1") return RECORDED_TOOL;
+            throw new Error("recorded tool dependency is unavailable");
+          }, {logicalKey: "tool.eligibility", boundaryClass: "tool", sideEffect: "read_only", replayPolicy: "substitute", parentLogicalKey: "agent.answer"});
+        } finally { span.end(); }
+      });
+
       const policy = await tracer.startActiveSpan("policy-lookup", async span => {
         span.setAttribute("openinference.span.kind", "TOOL");
         try {
@@ -112,6 +155,7 @@ async function run(): Promise<number> {
       };
       const modelResponse = await tracer.startActiveSpan("model-call", async span => {
         span.setAttribute("openinference.span.kind", "LLM");
+        span.setAttribute("gen_ai.tool.definitions", canonical(TOOL_DEFINITIONS));
         try {
           return await boundary<ModelResponse>(modelRequest, async () => {
             modelCallbackInvoked = true;
@@ -139,8 +183,15 @@ async function run(): Promise<number> {
 
       const result = {
         answer: `${policy.rule}; ${modelResponse.response.choices[0]?.message.content ?? ""}`,
+        evidence: retrieved.documents[0]?.content ?? "",
+        limit_days: mcpResult.limit_days,
+        eligible: toolResult.eligible,
       };
       root.setAttribute("flight.reference.model_callback_invoked", modelCallbackInvoked);
+      root.setAttribute("flight.reference.retrieval_callback_invoked", retrievalCallbackInvoked);
+      root.setAttribute("flight.reference.mcp_callback_invoked", mcpCallbackInvoked);
+      root.setAttribute("flight.reference.tool_callback_invoked", toolCallbackInvoked);
+      root.setAttribute("flight.reference.api_callback_invoked", callbackInvoked);
       root.setAttribute("output.value", canonical(result));
       process.stdout.write(`${canonical(result)}\n`);
     } catch (error) {
@@ -150,6 +201,10 @@ async function run(): Promise<number> {
       };
       root.setAttribute("output.value", canonical(result));
       root.setAttribute("flight.reference.model_callback_invoked", modelCallbackInvoked);
+      root.setAttribute("flight.reference.retrieval_callback_invoked", retrievalCallbackInvoked);
+      root.setAttribute("flight.reference.mcp_callback_invoked", mcpCallbackInvoked);
+      root.setAttribute("flight.reference.tool_callback_invoked", toolCallbackInvoked);
+      root.setAttribute("flight.reference.api_callback_invoked", callbackInvoked);
       root.setStatus({ code: SpanStatusCode.ERROR, message: "required replay boundary did not match" });
       process.stdout.write(`${canonical(result)}\n`);
       exitCode = 17;

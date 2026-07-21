@@ -3,7 +3,7 @@ set -euo pipefail
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   echo 'usage: scripts/reference-replay-smoke.sh <artifact-directory>'
-  echo 'Records the Python reference agent, proves exact controlled replay, and proves an unmatched boundary cannot fall back to a live dependency.'
+  echo 'Records the Python reference agent, proves five-boundary controlled replay, and proves an unmatched boundary cannot fall back to a live dependency.'
   exit 0
 fi
 if [[ $# -ne 1 ]]; then
@@ -138,12 +138,17 @@ assert capsule["completeness"]["replay"]["state"] == "ready", capsule["completen
 assert capsule["provenance"]["entrypoint"]["image"] == sys.argv[2], capsule["provenance"]
 assert capsule["provenance"]["entrypoint"]["command"] == ["python", "/app/agent.py"]
 assert capsule["provenance"]["entrypoint"]["model_hosts"] == ["fake-deps"]
-assert [boundary["logical_key"] for boundary in capsule["boundaries"]] == ["api.policy", "llm.answer"], capsule["boundaries"]
-assert [boundary["replay_policy"] for boundary in capsule["boundaries"]] == ["substitute", "live"]
+expected = ["retriever.policy", "mcp.policy", "tool.eligibility", "api.policy", "llm.answer"]
+assert [boundary["logical_key"] for boundary in capsule["boundaries"]] == expected, capsule["boundaries"]
+assert [boundary["replay_policy"] for boundary in capsule["boundaries"]] == ["substitute", "substitute", "substitute", "substitute", "live"]
 assert all(boundary["parent_logical_key"] == "agent.answer" for boundary in capsule["boundaries"])
 assert all(boundary["response"]["state"] == "captured" for boundary in capsule["boundaries"])
+assert len(capsule["model_configuration"]["tool_definitions"]) == 1, capsule["model_configuration"]
+assert capsule["model_configuration"]["tool_definitions"][0]["state"] == "captured"
 root = next(item for item in capsule["operations"] if item["logical_key"] == "agent.answer")
 assert root["attributes"]["flight.reference.model_callback_invoked"] == "true", root
+for kind in ["retrieval", "mcp", "tool", "api"]:
+    assert root["attributes"][f"flight.reference.{kind}_callback_invoked"] == "true", root
 PY
 
 create_replay "$source_id" "" false "$artifact_root/exact-job-created.json"
@@ -164,7 +169,8 @@ assert job["request"]["plan"]["plan_digest"].startswith("sha256:"), job["request
 result = job["result"]
 assert result["source_capsule_id"] == sys.argv[2], result
 assert result["candidate_image"] == sys.argv[3], result
-assert result["substitutions"] == ["api.policy"], result
+substituted = ["retriever.policy", "mcp.policy", "tool.eligibility", "api.policy"]
+assert result["substitutions"] == substituted, result
 assert result["live_boundaries"] == ["llm.answer"], result
 assert result["outcome"] == "exact", result
 assert result["exit_code"] == 0, result
@@ -175,7 +181,7 @@ for line in open(sys.argv[5]):
         events.append(json.loads(line.removeprefix("data: ")))
 assert len(events) == 3, events
 assert events[0]["plan_digest"].startswith("sha256:"), events[0]
-assert events[0]["substitutions"] == ["api.policy"], events[0]
+assert events[0]["substitutions"] == substituted, events[0]
 assert events[0]["live_boundaries"] == ["llm.answer"], events[0]
 assert events[1]["outcome"] == "exact", events[1]
 assert events[2]["outcome"] == "exact", events[2]
@@ -191,13 +197,17 @@ import json, sys
 source, candidate = (json.load(open(path)) for path in sys.argv[1:3])
 assert candidate["source_capsule_id"] == sys.argv[3], candidate
 assert candidate["terminal_status"] == "ok", candidate
-assert [item["logical_key"] for item in candidate["boundaries"]] == ["api.policy", "llm.answer"], candidate["boundaries"]
+expected = ["retriever.policy", "mcp.policy", "tool.eligibility", "api.policy", "llm.answer"]
+assert [item["logical_key"] for item in candidate["boundaries"]] == expected, candidate["boundaries"]
 def root_output(capsule):
     return next(item["output"]["digest"] for item in capsule["operations"] if item["logical_key"] == "agent.answer")
 assert root_output(source) == root_output(candidate), (root_output(source), root_output(candidate))
 assert [item["response"]["digest"] for item in source["boundaries"]] == [item["response"]["digest"] for item in candidate["boundaries"]]
+assert source["model_configuration"]["tool_definitions"] == candidate["model_configuration"]["tool_definitions"]
 root = next(item for item in candidate["operations"] if item["logical_key"] == "agent.answer")
 assert root["attributes"]["flight.reference.model_callback_invoked"] == "true", root
+for kind in ["retrieval", "mcp", "tool", "api"]:
+    assert root["attributes"][f"flight.reference.{kind}_callback_invoked"] == "false", root
 PY
 authorized_curl -H 'Content-Type: application/json' \
   --data "{\"baseline_capsule_id\":\"$source_id\",\"candidate_capsule_id\":\"$exact_candidate_id\"}" \
@@ -224,7 +234,7 @@ assert job["request"]["allowed_hosts"] == [], job["request"]
 assert job["request"]["plan"]["substitute_llm"] is True, job["request"]
 result = job["result"]
 assert result["source_capsule_id"] == sys.argv[2], result
-assert result["substitutions"] == ["api.policy", "llm.answer"], result
+assert result["substitutions"] == ["retriever.policy", "mcp.policy", "tool.eligibility", "api.policy", "llm.answer"], result
 assert result.get("live_boundaries", []) == [], result
 assert result["outcome"] == "exact", result
 assert result["exit_code"] == 0, result
@@ -239,10 +249,13 @@ import json, sys
 source, candidate = (json.load(open(path)) for path in sys.argv[1:3])
 assert candidate["source_capsule_id"] == sys.argv[3], candidate
 assert candidate["terminal_status"] == "ok", candidate
-assert [item["logical_key"] for item in candidate["boundaries"]] == ["api.policy", "llm.answer"], candidate["boundaries"]
+assert [item["logical_key"] for item in candidate["boundaries"]] == ["retriever.policy", "mcp.policy", "tool.eligibility", "api.policy", "llm.answer"], candidate["boundaries"]
 assert [item["response"]["digest"] for item in source["boundaries"]] == [item["response"]["digest"] for item in candidate["boundaries"]]
+assert source["model_configuration"]["tool_definitions"] == candidate["model_configuration"]["tool_definitions"]
 root = next(item for item in candidate["operations"] if item["logical_key"] == "agent.answer")
 assert root["attributes"]["flight.reference.model_callback_invoked"] == "false", root
+for kind in ["retrieval", "mcp", "tool", "api"]:
+    assert root["attributes"][f"flight.reference.{kind}_callback_invoked"] == "false", root
 PY
 
 create_replay "$source_id" "mismatch-request" false "$artifact_root/mismatch-job-created.json"
@@ -261,7 +274,7 @@ assert job["error"]["code"] == "build", job
 result = job["result"]
 assert result["exit_code"] == 17, result
 assert result["outcome"] == "divergent", result
-assert result["substitutions"] == ["api.policy"], result
+assert result["substitutions"] == ["retriever.policy", "mcp.policy", "tool.eligibility", "api.policy"], result
 assert result["live_boundaries"] == ["llm.answer"], result
 assert len(result["trials"]) == 1 and result["trials"][0]["exit_code"] == 17, result
 print(result["candidate_capsule_id"])

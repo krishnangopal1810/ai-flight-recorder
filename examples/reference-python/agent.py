@@ -20,6 +20,18 @@ PROJECT_ID = "reference-replay"
 SERVICE_NAME = "python-reference-agent"
 ENTRYPOINT = ["python", "/app/agent.py"]
 RECORDED_POLICY = {"rule": "refunds within 30 days"}
+RECORDED_RETRIEVAL = {
+    "documents": [{"id": "refund-policy", "content": "grounded policy evidence"}]
+}
+RECORDED_MCP = {"uri": "policy://refund", "limit_days": 30}
+RECORDED_TOOL = {"eligible": True}
+TOOL_DEFINITIONS = [
+    {
+        "type": "function",
+        "name": "check_refund_eligibility",
+        "description": "Check whether a refund request is within policy",
+    }
+]
 MODEL_HOST = "fake-deps"
 MODEL_ENDPOINT = f"http://{MODEL_HOST}:9099/v1/chat/completions"
 
@@ -56,6 +68,9 @@ def main() -> int:
     exit_code = 0
     callback_invoked = False
     model_callback_invoked = False
+    retrieval_callback_invoked = False
+    mcp_callback_invoked = False
+    tool_callback_invoked = False
 
     with tracer.start_as_current_span("answer-policy") as root:
         root.set_attribute("openinference.span.kind", "AGENT")
@@ -69,6 +84,33 @@ def main() -> int:
             input_mode="stdin_json",
             output_mode="stdout_json",
         )
+
+        retrieval_request = {"query": root_input["policy_id"]}
+
+        def retrieval_dependency() -> dict[str, Any]:
+            nonlocal retrieval_callback_invoked
+            retrieval_callback_invoked = True
+            if os.environ.get("FLIGHT_RECORDING_FIXTURE") == "1":
+                return RECORDED_RETRIEVAL
+            raise RuntimeError("recorded retrieval dependency is unavailable")
+
+        mcp_request = {"uri": "policy://refund"}
+
+        def mcp_dependency() -> dict[str, Any]:
+            nonlocal mcp_callback_invoked
+            mcp_callback_invoked = True
+            if os.environ.get("FLIGHT_RECORDING_FIXTURE") == "1":
+                return RECORDED_MCP
+            raise RuntimeError("recorded MCP dependency is unavailable")
+
+        tool_request = {"days_since_purchase": 12, "limit_days": 30}
+
+        def tool_dependency() -> dict[str, bool]:
+            nonlocal tool_callback_invoked
+            tool_callback_invoked = True
+            if os.environ.get("FLIGHT_RECORDING_FIXTURE") == "1":
+                return RECORDED_TOOL
+            raise RuntimeError("recorded tool dependency is unavailable")
 
         request = {"policy_id": root_input["policy_id"]}
         if os.environ.get("FLIGHT_REPLAY_MODEL") == "mismatch-request":
@@ -84,6 +126,42 @@ def main() -> int:
 
         result: dict[str, Any]
         try:
+            with tracer.start_as_current_span("policy-retrieval") as retrieval_span:
+                retrieval_span.set_attribute("openinference.span.kind", "RETRIEVER")
+                retrieved = boundary(
+                    "retriever.policy",
+                    retrieval_request,
+                    retrieval_dependency,
+                    boundary_class="retriever",
+                    side_effect="read_only",
+                    replay_policy="substitute",
+                    parent_logical_key="agent.answer",
+                )
+
+            with tracer.start_as_current_span("policy-resource") as mcp_span:
+                mcp_span.set_attribute("flight.operation.kind", "mcp")
+                mcp_result = boundary(
+                    "mcp.policy",
+                    mcp_request,
+                    mcp_dependency,
+                    boundary_class="mcp",
+                    side_effect="read_only",
+                    replay_policy="substitute",
+                    parent_logical_key="agent.answer",
+                )
+
+            with tracer.start_as_current_span("eligibility-tool") as tool_span:
+                tool_span.set_attribute("openinference.span.kind", "TOOL")
+                tool_result = boundary(
+                    "tool.eligibility",
+                    tool_request,
+                    tool_dependency,
+                    boundary_class="tool",
+                    side_effect="read_only",
+                    replay_policy="substitute",
+                    parent_logical_key="agent.answer",
+                )
+
             with tracer.start_as_current_span("policy-lookup") as policy_span:
                 policy_span.set_attribute("openinference.span.kind", "TOOL")
                 policy = boundary(
@@ -118,6 +196,7 @@ def main() -> int:
 
             with tracer.start_as_current_span("model-call") as model_span:
                 model_span.set_attribute("openinference.span.kind", "LLM")
+                model_span.set_attribute("gen_ai.tool.definitions", canonical(TOOL_DEFINITIONS))
                 model_response = boundary(
                     "llm.answer",
                     model_request,
@@ -128,10 +207,22 @@ def main() -> int:
                     parent_logical_key="agent.answer",
                 )
             model_content = model_response["response"]["choices"][0]["message"]["content"]
-            result = {"answer": f"{policy['rule']}; {model_content}"}
+            result = {
+                "answer": f"{policy['rule']}; {model_content}",
+                "evidence": retrieved["documents"][0]["content"],
+                "limit_days": mcp_result["limit_days"],
+                "eligible": tool_result["eligible"],
+            }
             root.set_attribute(
                 "flight.reference.model_callback_invoked", model_callback_invoked
             )
+            root.set_attribute(
+                "flight.reference.retrieval_callback_invoked",
+                retrieval_callback_invoked,
+            )
+            root.set_attribute("flight.reference.mcp_callback_invoked", mcp_callback_invoked)
+            root.set_attribute("flight.reference.tool_callback_invoked", tool_callback_invoked)
+            root.set_attribute("flight.reference.api_callback_invoked", callback_invoked)
             root.set_attribute("output.value", canonical(result))
             print(canonical(result))
         except BoundaryError as error:
@@ -143,6 +234,13 @@ def main() -> int:
             root.set_attribute(
                 "flight.reference.model_callback_invoked", model_callback_invoked
             )
+            root.set_attribute(
+                "flight.reference.retrieval_callback_invoked",
+                retrieval_callback_invoked,
+            )
+            root.set_attribute("flight.reference.mcp_callback_invoked", mcp_callback_invoked)
+            root.set_attribute("flight.reference.tool_callback_invoked", tool_callback_invoked)
+            root.set_attribute("flight.reference.api_callback_invoked", callback_invoked)
             root.set_status(Status(StatusCode.ERROR, "required replay boundary did not match"))
             print(canonical(result))
             exit_code = 17

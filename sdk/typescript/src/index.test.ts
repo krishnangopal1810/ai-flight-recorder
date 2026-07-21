@@ -23,11 +23,17 @@ describe("boundary", () => {
   });
 
 	it("does not fail production calls when metadata cannot be canonicalized", async () => {
+		const attributes = new Map<string, unknown>();
+		const getSpan = vi.spyOn(trace, "getSpan").mockReturnValue({setAttribute: (key: string, value: unknown) => { attributes.set(key, value); }} as never);
 		const diagnostic = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 		await expect(boundary({value: 1n}, async () => "ok", {logicalKey: "opaque", boundaryClass: "api"})).resolves.toBe("ok");
 		expect(diagnostic).toHaveBeenCalled();
 		expect(String(diagnostic.mock.calls[0]?.[0])).not.toContain("1n");
+		expect(attributes.get("flight.input.omission.reason")).toBe("serialization_failed");
+		expect(attributes.get("flight.input.omission.size")).toBe(0);
+		expect(attributes.get("flight.input.omission.media_type")).toBe("application/json");
 		diagnostic.mockRestore();
+		getSpan.mockRestore();
 	});
 
   it("substitutes an exact replay match", async () => {

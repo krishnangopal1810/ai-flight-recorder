@@ -3,7 +3,7 @@ set -euo pipefail
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   echo 'usage: scripts/typescript-reference-smoke.sh <artifact-directory> <python-source-capsule>'
-  echo 'Proves TypeScript/Python OTLP parity, all-substituted replay, and safe incomplete-metadata diagnostics.'
+  echo 'Proves TypeScript/Python OTLP parity, five-boundary all-substituted replay, and safe incomplete-metadata diagnostics.'
   exit 0
 fi
 if [[ $# -ne 2 ]]; then
@@ -135,9 +135,13 @@ def root(capsule):
     return next(item for item in capsule["operations"] if item["logical_key"] == "agent.answer")
 
 assert boundaries(typescript_capsule) == boundaries(python_capsule), (boundaries(typescript_capsule), boundaries(python_capsule))
+assert [item[0] for item in boundaries(typescript_capsule)] == ["retriever.policy", "mcp.policy", "tool.eligibility", "api.policy", "llm.answer"]
 assert root(typescript_capsule)["input"]["digest"] == root(python_capsule)["input"]["digest"]
 assert root(typescript_capsule)["output"]["digest"] == root(python_capsule)["output"]["digest"]
+assert typescript_capsule["model_configuration"]["tool_definitions"] == python_capsule["model_configuration"]["tool_definitions"]
 assert root(typescript_capsule)["attributes"]["flight.reference.model_callback_invoked"] == "true"
+for kind in ["retrieval", "mcp", "tool", "api"]:
+    assert root(typescript_capsule)["attributes"][f"flight.reference.{kind}_callback_invoked"] == "true"
 PY
 
 python3 - "$source_id" >"$artifact_root/replay-request.json" <<'PY'
@@ -159,7 +163,7 @@ assert job["state"] == "completed", job
 assert job["request"]["allowed_hosts"] == [], job["request"]
 result = job["result"]
 assert result["source_capsule_id"] == sys.argv[2], result
-assert result["substitutions"] == ["api.policy", "llm.answer"], result
+assert result["substitutions"] == ["retriever.policy", "mcp.policy", "tool.eligibility", "api.policy", "llm.answer"], result
 assert result.get("live_boundaries", []) == [], result
 assert result["outcome"] == "exact" and result["exit_code"] == 0, result
 print(result["candidate_capsule_id"])
@@ -172,8 +176,11 @@ source, candidate = (json.load(open(path)) for path in sys.argv[1:3])
 assert candidate["source_capsule_id"] == sys.argv[3], candidate
 assert candidate["terminal_status"] == "ok", candidate
 assert [item["response"]["digest"] for item in source["boundaries"]] == [item["response"]["digest"] for item in candidate["boundaries"]]
+assert source["model_configuration"]["tool_definitions"] == candidate["model_configuration"]["tool_definitions"]
 root = next(item for item in candidate["operations"] if item["logical_key"] == "agent.answer")
 assert root["attributes"]["flight.reference.model_callback_invoked"] == "false", root
+for kind in ["retrieval", "mcp", "tool", "api"]:
+    assert root["attributes"][f"flight.reference.{kind}_callback_invoked"] == "false", root
 PY
 
 printf '{"policy_id":"refund"}' | \

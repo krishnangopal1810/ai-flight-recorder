@@ -171,7 +171,7 @@ def _annotate(
         span.set_attribute("flight.boundary.request_digest", request_digest)
         span.set_attribute("flight.boundary.matching_mode", "exact")
         span.set_attribute("flight.boundary.ignore_paths", json.dumps(ignore_paths))
-        span.set_attribute("flight.input", _canonical(request))
+        _capture_content(span, "flight.input", request, "capture_boundary_request")
         if sandbox is not None:
             span.set_attribute("flight.boundary.sandbox", sandbox)
     except Exception as exc:
@@ -180,9 +180,35 @@ def _annotate(
 
 def _capture_response(response: Any) -> None:
     try:
-        trace.get_current_span().set_attribute("flight.output", _canonical(response))
+        _capture_content(
+            trace.get_current_span(),
+            "flight.output",
+            response,
+            "capture_boundary_response",
+        )
     except Exception as exc:
         _diagnostic("capture_boundary_response", exc)
+
+
+def _capture_content(span: trace.Span, attribute: str, value: Any, operation: str) -> None:
+    try:
+        span.set_attribute(attribute, _canonical(value))
+    except Exception as exc:
+        span.set_attribute(f"{attribute}.omission.reason", "serialization_failed")
+        span.set_attribute(f"{attribute}.omission.size", _omission_size(value))
+        span.set_attribute(f"{attribute}.omission.media_type", "application/json")
+        _diagnostic(operation, exc)
+
+
+def _omission_size(value: Any) -> int:
+    if isinstance(value, str):
+        return len(value.encode("utf-8"))
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return len(value)
+    try:
+        return len(json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode())
+    except Exception:
+        return 0
 
 
 def _load_plan() -> Mapping[str, Any] | None:

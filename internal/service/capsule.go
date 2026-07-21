@@ -2,9 +2,11 @@ package service
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -13,13 +15,21 @@ import (
 )
 
 type CaptureOperation struct {
-	Operation  types.Operation
-	Input      []byte
-	InputType  string
-	Output     []byte
-	OutputType string
-	Boundary   *types.Boundary
-	Evaluation *types.Evaluation
+	Operation      types.Operation
+	Input          []byte
+	InputType      string
+	InputOmission  *types.PayloadRef
+	Output         []byte
+	OutputType     string
+	OutputOmission *types.PayloadRef
+	Boundary       *types.Boundary
+	Evaluation     *types.Evaluation
+}
+
+type CapturePayload struct {
+	Data      []byte
+	MediaType string
+	Omission  *types.PayloadRef
 }
 
 type CaptureRequest struct {
@@ -30,6 +40,7 @@ type CaptureRequest struct {
 	TerminalStatus  string
 	Provenance      types.Provenance
 	Model           types.ModelConfiguration
+	ToolDefinitions []CapturePayload
 	Operations      []CaptureOperation
 	Artifacts       []struct {
 		Artifact types.Artifact
@@ -63,6 +74,7 @@ func (s *CapsuleService) Capture(ctx context.Context, request CaptureRequest) (t
 		StartTime: request.StartTime, EndTime: request.EndTime, TerminalStatus: request.TerminalStatus,
 		Privacy: types.PrivacySummary{Mode: s.policy.policy.Mode, PolicyVersion: s.policy.policy.Version, Redactions: map[string]int{}, Exclusions: map[string]int{}, ExportPolicy: "allowed"},
 	}
+	payloads := map[string][]byte{}
 	if result, err := s.sanitizeValue("project_id", request.ProjectID, &capsule.ProjectID); err != nil {
 		return types.RunCapsule{}, s.policyFailure(ctx, request, err)
 	} else {
@@ -78,11 +90,31 @@ func (s *CapsuleService) Capture(ctx context.Context, request CaptureRequest) (t
 	} else {
 		mergePolicySummary(&capsule.Privacy, result)
 	}
-	if result, err := s.sanitizeValue("model_configuration", request.Model, &capsule.Model); err != nil {
+	model := request.Model
+	model.ToolDefinitions = nil
+	if result, err := s.sanitizeValue("model_configuration", model, &capsule.Model); err != nil {
 		return types.RunCapsule{}, s.policyFailure(ctx, request, err)
 	} else {
 		mergePolicySummary(&capsule.Privacy, result)
 	}
+	for _, captured := range request.ToolDefinitions {
+		ref, data, result, err := s.captureContent("model_configuration.tool_definitions", captured)
+		if err != nil {
+			return types.RunCapsule{}, s.policyFailure(ctx, request, err)
+		}
+		if ref == nil {
+			continue
+		}
+		capsule.Model.ToolDefinitions = appendUniquePayload(capsule.Model.ToolDefinitions, *ref)
+		mergePolicySummary(&capsule.Privacy, result)
+		if data != nil {
+			payloads[ref.Digest] = data
+		}
+	}
+	sort.Slice(capsule.Model.ToolDefinitions, func(i, j int) bool {
+		left, right := capsule.Model.ToolDefinitions[i], capsule.Model.ToolDefinitions[j]
+		return fmt.Sprintf("%s\x00%s\x00%s\x00%d\x00%s", left.Digest, left.State, left.Reason, left.Size, left.MediaType) < fmt.Sprintf("%s\x00%s\x00%s\x00%d\x00%s", right.Digest, right.State, right.Reason, right.Size, right.MediaType)
+	})
 	if capsule.StartTime.IsZero() {
 		capsule.StartTime = s.clock()
 	}
@@ -96,33 +128,34 @@ func (s *CapsuleService) Capture(ctx context.Context, request CaptureRequest) (t
 	if capsule.TerminalStatus == "" {
 		capsule.TerminalStatus = "unset"
 	}
-	payloads := map[string][]byte{}
 	boundaryOccurrences := map[string]int{}
 	for index, captured := range request.Operations {
 		operation := captured.Operation
 		operation.Sequence = index
-		if len(captured.Input) > 0 {
-			ref, data, result, err := s.capturePayload("operations.input", captured.Input, captured.InputType)
+		if captured.Input != nil || captured.InputOmission != nil {
+			ref, data, result, err := s.captureContent("operations.input", CapturePayload{Data: captured.Input, MediaType: captured.InputType, Omission: captured.InputOmission})
 			if err != nil {
 				return types.RunCapsule{}, s.policyFailure(ctx, request, err)
 			}
-			operation.Input = &ref
+			operation.Input = ref
 			mergePolicySummary(&capsule.Privacy, result)
 			if data != nil {
 				payloads[ref.Digest] = data
 			}
 		}
-		if len(captured.Output) > 0 {
-			ref, data, result, err := s.capturePayload("operations.output", captured.Output, captured.OutputType)
+		if captured.Output != nil || captured.OutputOmission != nil {
+			ref, data, result, err := s.captureContent("operations.output", CapturePayload{Data: captured.Output, MediaType: captured.OutputType, Omission: captured.OutputOmission})
 			if err != nil {
 				return types.RunCapsule{}, s.policyFailure(ctx, request, err)
 			}
-			operation.Output = &ref
+			operation.Output = ref
 			mergePolicySummary(&capsule.Privacy, result)
 			if data != nil {
 				payloads[ref.Digest] = data
 			}
 		}
+		inputRef, outputRef := operation.Input, operation.Output
+		operation.Input, operation.Output = nil, nil
 		var sanitizedOperation types.Operation
 		metadataResult, err := s.sanitizeValue("operations.metadata", operation, &sanitizedOperation)
 		if err != nil {
@@ -130,18 +163,14 @@ func (s *CapsuleService) Capture(ctx context.Context, request CaptureRequest) (t
 		}
 		mergePolicySummary(&capsule.Privacy, metadataResult)
 		if metadataResult.Omitted {
-			sanitizedOperation = types.Operation{SpanID: operation.SpanID, ParentSpanID: operation.ParentSpanID, Kind: "omitted", Name: "metadata omitted by policy", StartTime: operation.StartTime, EndTime: operation.EndTime, Input: operation.Input, Output: operation.Output, Status: operation.Status, Sequence: operation.Sequence}
+			sanitizedOperation = types.Operation{SpanID: operation.SpanID, ParentSpanID: operation.ParentSpanID, Kind: "omitted", Name: "metadata omitted by policy", StartTime: operation.StartTime, EndTime: operation.EndTime, Status: operation.Status, Sequence: operation.Sequence}
 		}
+		sanitizedOperation.Input, sanitizedOperation.Output = inputRef, outputRef
 		operation = sanitizedOperation
 		capsule.Operations = append(capsule.Operations, operation)
 		if captured.Evaluation != nil {
 			evaluation := *captured.Evaluation
-			if operation.Input != nil {
-				evaluation.Inputs = []types.PayloadRef{*operation.Input}
-			}
-			if operation.Output != nil {
-				evaluation.Evidence = operation.Output
-			}
+			evaluation.Inputs, evaluation.Evidence = nil, nil
 			var sanitizedEvaluation types.Evaluation
 			evaluationResult, err := s.sanitizeValue("evaluations.metadata", evaluation, &sanitizedEvaluation)
 			if err != nil {
@@ -149,6 +178,12 @@ func (s *CapsuleService) Capture(ctx context.Context, request CaptureRequest) (t
 			}
 			mergePolicySummary(&capsule.Privacy, evaluationResult)
 			if !evaluationResult.Omitted {
+				if operation.Input != nil {
+					sanitizedEvaluation.Inputs = []types.PayloadRef{*operation.Input}
+				}
+				if operation.Output != nil {
+					sanitizedEvaluation.Evidence = operation.Output
+				}
 				capsule.Evaluations = append(capsule.Evaluations, sanitizedEvaluation)
 			}
 		}
@@ -161,9 +196,7 @@ func (s *CapsuleService) Capture(ctx context.Context, request CaptureRequest) (t
 				boundary.ID = "boundary_" + operation.SpanID
 			}
 			boundary.OperationSpanID = operation.SpanID
-			if operation.Output != nil {
-				boundary.Response = operation.Output
-			}
+			boundary.Response = nil
 			var sanitizedBoundary types.Boundary
 			boundaryResult, err := s.sanitizeValue("boundaries.metadata", boundary, &sanitizedBoundary)
 			if err != nil {
@@ -173,23 +206,28 @@ func (s *CapsuleService) Capture(ctx context.Context, request CaptureRequest) (t
 			if boundaryResult.Omitted {
 				return types.RunCapsule{}, types.NewError(types.ErrValidation, "capture policy omitted required boundary metadata", "use redaction instead of excluding the complete boundary", nil)
 			}
+			sanitizedBoundary.Response = operation.Output
 			capsule.Boundaries = append(capsule.Boundaries, sanitizedBoundary)
 		}
 	}
 	for _, captured := range request.Artifacts {
 		artifact := captured.Artifact
-		if len(captured.Data) > 0 {
-			ref, data, result, err := s.capturePayload("artifacts."+artifact.LogicalName, captured.Data, artifact.MediaType)
+		declaredPayload := artifact.Payload
+		artifact.Payload = nil
+		if captured.Data != nil || declaredPayload != nil {
+			ref, data, result, err := s.captureContent("artifacts."+artifact.LogicalName, CapturePayload{Data: captured.Data, MediaType: artifact.MediaType, Omission: declaredPayload})
 			if err != nil {
 				return types.RunCapsule{}, s.policyFailure(ctx, request, err)
 			}
-			artifact.Payload = &ref
+			artifact.Payload = ref
 			artifact.State = ref.State
 			mergePolicySummary(&capsule.Privacy, result)
 			if data != nil {
 				payloads[ref.Digest] = data
 			}
 		}
+		payloadRef := artifact.Payload
+		artifact.Payload = nil
 		var sanitizedArtifact types.Artifact
 		artifactResult, err := s.sanitizeValue("artifacts.metadata", artifact, &sanitizedArtifact)
 		if err != nil {
@@ -198,6 +236,10 @@ func (s *CapsuleService) Capture(ctx context.Context, request CaptureRequest) (t
 		mergePolicySummary(&capsule.Privacy, artifactResult)
 		if artifactResult.Omitted {
 			sanitizedArtifact = types.Artifact{ID: artifact.ID, Type: "omitted", LogicalName: "metadata omitted by policy", State: "omitted"}
+		}
+		sanitizedArtifact.Payload = payloadRef
+		if payloadRef != nil {
+			sanitizedArtifact.State = payloadRef.State
 		}
 		capsule.Artifacts = append(capsule.Artifacts, sanitizedArtifact)
 	}
@@ -273,15 +315,76 @@ func (s *CapsuleService) QuarantineDiagnostic(ctx context.Context, reason, trace
 }
 
 func (s *CapsuleService) capturePayload(name string, raw []byte, mediaType string) (types.PayloadRef, []byte, PolicyResult, error) {
+	if strings.HasPrefix(strings.ToLower(mediaType), "application/json") && !json.Valid(raw) {
+		return types.PayloadRef{MediaType: mediaType, Size: int64(len(raw)), State: types.PayloadStateOmitted, Reason: types.OmissionSerialization}, nil, PolicyResult{}, nil
+	}
 	result, err := s.policy.ApplyJSON(name, raw)
 	if err != nil {
 		return types.PayloadRef{}, nil, PolicyResult{}, err
 	}
 	if result.Omitted {
-		return types.PayloadRef{MediaType: mediaType, Size: int64(len(raw)), State: "omitted", Reason: result.Reason}, nil, result, nil
+		return types.PayloadRef{MediaType: mediaType, Size: int64(len(raw)), State: types.PayloadStateOmitted, Reason: result.Reason}, nil, result, nil
 	}
 	digest := DigestBytes(result.Data)
-	return types.PayloadRef{Digest: digest, MediaType: mediaType, Size: int64(len(result.Data)), State: "captured"}, result.Data, result, nil
+	return types.PayloadRef{Digest: digest, MediaType: mediaType, Size: int64(len(result.Data)), State: types.PayloadStateCaptured}, result.Data, result, nil
+}
+
+func (s *CapsuleService) captureContent(name string, captured CapturePayload) (*types.PayloadRef, []byte, PolicyResult, error) {
+	if captured.Data != nil && captured.Omission != nil {
+		return nil, nil, PolicyResult{}, types.NewError(types.ErrValidation, "captured content has both bytes and an omission", "emit either policy-processable bytes or one typed omission", nil)
+	}
+	if captured.Data != nil {
+		ref, data, result, err := s.capturePayload(name, captured.Data, captured.MediaType)
+		return &ref, data, result, err
+	}
+	if captured.Omission == nil {
+		return nil, nil, PolicyResult{}, nil
+	}
+	ref := normalizeOmission(*captured.Omission, captured.MediaType)
+	return &ref, nil, PolicyResult{}, nil
+}
+
+func normalizeOmission(ref types.PayloadRef, mediaType string) types.PayloadRef {
+	ref.State = types.PayloadStateOmitted
+	if ref.MediaType == "" {
+		ref.MediaType = mediaType
+	}
+	if ref.Size < 0 || !validOmissionReason(ref.Reason) {
+		ref.Size = max(ref.Size, 0)
+		ref.Reason = types.OmissionInvalidMetadata
+	}
+	if ref.Digest != "" && !validSHA256(ref.Digest) {
+		ref.Digest = ""
+		ref.Reason = types.OmissionInvalidMetadata
+	}
+	return ref
+}
+
+func validOmissionReason(reason string) bool {
+	switch reason {
+	case types.OmissionPayloadLimit, types.OmissionPolicyExclusion, types.OmissionSerialization, types.OmissionInvalidMetadata:
+		return true
+	default:
+		return false
+	}
+}
+
+func validSHA256(value string) bool {
+	raw := strings.TrimPrefix(value, "sha256:")
+	if raw == value || len(raw) != 64 || raw != strings.ToLower(raw) {
+		return false
+	}
+	_, err := hex.DecodeString(raw)
+	return err == nil
+}
+
+func appendUniquePayload(values []types.PayloadRef, candidate types.PayloadRef) []types.PayloadRef {
+	for _, existing := range values {
+		if existing == candidate {
+			return values
+		}
+	}
+	return append(values, candidate)
 }
 
 func (s *CapsuleService) policyFailure(ctx context.Context, request CaptureRequest, cause error) error {

@@ -7,6 +7,16 @@ import (
 
 const SchemaVersion = "1.0"
 
+const (
+	PayloadStateCaptured = "captured"
+	PayloadStateOmitted  = "omitted"
+
+	OmissionPayloadLimit    = "payload_limit"
+	OmissionPolicyExclusion = "policy_exclusion"
+	OmissionSerialization   = "serialization_failed"
+	OmissionInvalidMetadata = "invalid_omission_metadata"
+)
+
 type CompletenessState string
 
 const (
@@ -76,7 +86,7 @@ type ModelConfiguration struct {
 }
 
 type PayloadRef struct {
-	Digest    string `json:"digest"`
+	Digest    string `json:"digest,omitempty"`
 	MediaType string `json:"media_type,omitempty"`
 	Size      int64  `json:"size"`
 	State     string `json:"state,omitempty"`

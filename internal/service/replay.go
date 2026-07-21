@@ -64,9 +64,7 @@ func (s *ReplayService) Create(ctx context.Context, request types.CreateReplayRe
 	if plan.PassThreshold <= 0 {
 		plan.PassThreshold = 1
 	}
-	if len(source.Operations) > 0 {
-		plan.OriginalInput = source.Operations[0].Input
-	}
+	plan.OriginalInput = replayRootInput(source.Operations)
 	for _, artifact := range source.Artifacts {
 		if artifact.State == "captured" {
 			plan.ExpectedArtifacts = append(plan.ExpectedArtifacts, artifact.ID)
@@ -91,6 +89,15 @@ func (s *ReplayService) Create(ctx context.Context, request types.CreateReplayRe
 	event, _ := json.Marshal(map[string]any{"plan_digest": plan.PlanDigest, "substitutions": substitutions, "live_boundaries": live})
 	_ = s.repository.AppendJobEvent(ctx, types.JobEvent{JobID: job.ID, Type: "queued", Data: event, Time: now})
 	return job, nil
+}
+
+func replayRootInput(operations []types.Operation) *types.PayloadRef {
+	for index := range operations {
+		if operations[index].ParentSpanID == "" {
+			return operations[index].Input
+		}
+	}
+	return nil
 }
 
 func (s *ReplayService) Preflight(ctx context.Context, source types.RunCapsule, request types.CreateReplayRequest) error {

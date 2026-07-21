@@ -133,17 +133,10 @@ func (r *Receiver) Capture(ctx context.Context, request *collectortrace.ExportTr
 					group.request.Model = mergeModelConfiguration(group.request.Model, modelConfiguration(spanAttributes, resourceAttributes))
 				}
 				captured := service.CaptureOperation{Operation: operation}
-				if input := firstValue(spanAttributes, "input.value", "openinference.span.input.value", "flight.input", "gen_ai.input.messages"); input != "" {
-					captured.Input, captured.InputType = []byte(input), firstString(spanAttributes, "input.mime_type", "openinference.span.input.mime_type", "flight.input.mime_type")
-					if captured.InputType == "" {
-						captured.InputType = "application/json"
-					}
-				}
-				if output := firstValue(spanAttributes, "output.value", "openinference.span.output.value", "flight.output", "gen_ai.output.messages"); output != "" {
-					captured.Output, captured.OutputType = []byte(output), firstString(spanAttributes, "output.mime_type", "openinference.span.output.mime_type", "flight.output.mime_type")
-					if captured.OutputType == "" {
-						captured.OutputType = "application/json"
-					}
+				captured.Input, captured.InputType, captured.InputOmission = operationContent(spanAttributes, "input")
+				captured.Output, captured.OutputType, captured.OutputOmission = operationContent(spanAttributes, "output")
+				if data, mediaType, omission := toolDefinitionContent(spanAttributes); data != nil || omission != nil {
+					group.request.ToolDefinitions = append(group.request.ToolDefinitions, service.CapturePayload{Data: data, MediaType: mediaType, Omission: omission})
 				}
 				if operation.Kind == "evaluator" {
 					captured.Evaluation = evaluationForOperation(operation, spanAttributes)
@@ -286,6 +279,7 @@ func mergeCaptureRequest(target *service.CaptureRequest, fragment service.Captur
 		target.Provenance = fragment.Provenance
 	}
 	target.Model = mergeModelConfiguration(target.Model, fragment.Model)
+	target.ToolDefinitions = append(target.ToolDefinitions, fragment.ToolDefinitions...)
 	if fragment.SourceCapsuleID != "" {
 		target.SourceCapsuleID = fragment.SourceCapsuleID
 	}
@@ -398,9 +392,6 @@ func firstString(values map[string]*commonv1.AnyValue, keys ...string) string {
 	}
 	return ""
 }
-func firstValue(values map[string]*commonv1.AnyValue, keys ...string) string {
-	return firstString(values, keys...)
-}
 func defaultString(value, fallback string) string {
 	if value == "" {
 		return fallback
@@ -442,12 +433,18 @@ func statusName(status *tracev1.Status) string {
 }
 
 func artifactEvent(spanID string, index int, values map[string]*commonv1.AnyValue) (types.Artifact, []byte) {
-	artifact := types.Artifact{ID: fmt.Sprintf("artifact_%s_%d", spanID, index), Type: firstString(values, "flight.artifact.type"), LogicalName: firstString(values, "flight.artifact.logical_name"), Version: firstString(values, "flight.artifact.version"), MediaType: firstString(values, "flight.artifact.media_type"), State: "omitted"}
-	data, err := base64.StdEncoding.DecodeString(firstString(values, "flight.artifact.content_base64"))
-	if err != nil || len(data) == 0 {
+	artifact := types.Artifact{ID: fmt.Sprintf("artifact_%s_%d", spanID, index), Type: firstString(values, "flight.artifact.type"), LogicalName: firstString(values, "flight.artifact.logical_name"), Version: firstString(values, "flight.artifact.version"), MediaType: firstString(values, "flight.artifact.media_type"), State: types.PayloadStateOmitted}
+	encoded, present := values["flight.artifact.content_base64"]
+	if !present {
 		return artifact, nil
 	}
-	artifact.State = "captured"
+	text := anyString(encoded)
+	data, err := base64.StdEncoding.DecodeString(text)
+	if err != nil {
+		artifact.Payload = &types.PayloadRef{MediaType: artifact.MediaType, Size: int64(len(text)), State: types.PayloadStateOmitted, Reason: types.OmissionSerialization}
+		return artifact, nil
+	}
+	artifact.State = types.PayloadStateCaptured
 	return artifact, data
 }
 
@@ -455,8 +452,9 @@ func safeAttributes(values map[string]*commonv1.AnyValue) map[string]string {
 	allowedPrefixes := []string{"flight.boundary.", "flight.environment.", "gen_ai.usage.", "llm.token_count.", "llm.cost."}
 	allowed := map[string]bool{
 		"flight.logical_key": true, "flight.operation.kind": true, "openinference.span.kind": true, "gen_ai.operation.name": true,
-		"flight.reference.model_callback_invoked": true,
-		"flight.evaluation.id":                    true, "flight.evaluation.version": true, "flight.evaluation.score": true, "flight.evaluation.threshold": true,
+		"flight.reference.model_callback_invoked": true, "flight.reference.retrieval_callback_invoked": true, "flight.reference.mcp_callback_invoked": true,
+		"flight.reference.tool_callback_invoked": true, "flight.reference.api_callback_invoked": true,
+		"flight.evaluation.id": true, "flight.evaluation.version": true, "flight.evaluation.score": true, "flight.evaluation.threshold": true,
 		"gen_ai.provider.name": true, "gen_ai.system": true, "gen_ai.request.model": true, "gen_ai.response.model": true,
 		"llm.system": true, "llm.provider": true, "llm.model_name": true, "llm.invocation_parameters": true,
 		"prompt.id": true, "prompt.vendor": true, "agent.name": true, "tool.id": true, "tool.name": true,

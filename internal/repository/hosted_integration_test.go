@@ -30,7 +30,11 @@ func TestHostedRepositoryContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	claimed.LeaseExpiresAt = &now
+	// Keep the lease safely behind the database clock. Using the exact client
+	// timestamp made this contract depend on TIMESTAMPTZ rounding at the
+	// immediate ClaimJob boundary rather than on lease-recovery behavior.
+	expired := now.Add(-time.Minute)
+	claimed.LeaseExpiresAt = &expired
 	claimed.UpdatedAt = now
 	if err := repo.UpdateJob(context.Background(), claimed); err != nil {
 		t.Fatal(err)
