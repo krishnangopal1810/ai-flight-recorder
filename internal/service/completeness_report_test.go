@@ -37,9 +37,10 @@ func TestAFRING003CompletenessReportPreservesBoundaryEvidenceAndAllModes(t *test
 
 func TestAFRING003DuplicateBoundaryIdentityBlocksReplayByBoundary(t *testing.T) {
 	response := &types.PayloadRef{Digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", State: types.PayloadStateCaptured}
+	request := &types.PayloadRef{Digest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", State: types.PayloadStateCaptured}
 	capsule := types.RunCapsule{
 		Provenance: types.Provenance{CommitSHA: "revision", Entrypoint: &types.Entrypoint{Command: []string{"/agent"}}},
-		Operations: []types.Operation{{SpanID: "root", Kind: "agent"}},
+		Operations: []types.Operation{{SpanID: "root", Kind: "agent", Input: request}},
 		Boundaries: []types.Boundary{
 			{ID: "boundary_one", OperationSpanID: "root", LogicalKey: "tool.lookup", Class: "tool", Occurrence: 0, Response: response},
 			{ID: "boundary_two", OperationSpanID: "root", LogicalKey: "tool.lookup", Class: "tool", Occurrence: 0, Response: response},
@@ -71,9 +72,10 @@ func TestAFRING003DuplicateBoundaryIdentityBlocksReplayByBoundary(t *testing.T) 
 
 func TestAFRING003DistinctRequestDigestsDoNotCreateFalseAmbiguity(t *testing.T) {
 	response := &types.PayloadRef{Digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", State: types.PayloadStateCaptured}
+	request := &types.PayloadRef{Digest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", State: types.PayloadStateCaptured}
 	capsule := types.RunCapsule{
 		Provenance: types.Provenance{CommitSHA: "revision", Entrypoint: &types.Entrypoint{Command: []string{"/agent"}}},
-		Operations: []types.Operation{{SpanID: "root", Kind: "agent"}},
+		Operations: []types.Operation{{SpanID: "root", Kind: "agent", Input: request}},
 		Boundaries: []types.Boundary{
 			{ID: "boundary_one", OperationSpanID: "root", LogicalKey: "tool.lookup", Class: "tool", Occurrence: 0, RequestDigest: "sha256:one", Response: response},
 			{ID: "boundary_two", OperationSpanID: "root", LogicalKey: "tool.lookup", Class: "tool", Occurrence: 0, RequestDigest: "sha256:two", Response: response},

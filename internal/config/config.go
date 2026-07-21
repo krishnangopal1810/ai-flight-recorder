@@ -98,6 +98,7 @@ func Default(dataDir string) Config {
 			Version: "1", Mode: "strict", MaxFieldSize: 1 << 20, DefaultRetention: 30 * 24 * time.Hour,
 			Rules: []PolicyRule{
 				{Name: "authorization", Path: "*", Pattern: `(?i)(authorization|api[_-]?key|password|token)`, Action: "redact", Replacement: "[REDACTED]"},
+				{Name: "email", Path: "*", Pattern: `(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b`, Action: "redact", Replacement: "[REDACTED]"},
 			},
 		},
 	}

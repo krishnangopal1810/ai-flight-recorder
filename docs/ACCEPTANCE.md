@@ -11,7 +11,7 @@
 | AFR-T05 | `TestAFRT05RepeatedTrialsNeverClaimFalseDeterminism` | Repetitions produce exact, equivalent, divergent, or inconclusive. |
 | AFR-T06 | `scripts/completeness-smoke.sh`, `TestAFRT06PlaybackSurvivesMissingReplayEvidence` | A live missing-tool-response capsule stays playable, blocks replay and bisect with the exact boundary ID through API/CLI/UI, and fails replay preflight without execution. |
 | AFR-T07 | `TestAFRT07MalformedSpanIsIsolatedFromValidTrace` | A malformed span is rejected without discarding valid trace evidence. |
-| AFR-T08 | `TestAFRT08SeededSecretsNeverReachLocalStore` | Policy runs before store, manifest, or quarantine persistence. |
+| AFR-T08 | `scripts/privacy-smoke.sh`, `TestAFRT08SeededSecretsNeverReachLocalSinks`, `TestAFRT08SeededSecretsNeverReachHostedSinks` | API keys, tokens, passwords, configured email PII, exclusions, and strict failures are policy-processed before canonical request hashing, local/hosted storage, indexes, bundles, quarantine, diagnostics, logs, or metrics. |
 | AFR-T09 | `TestAFRT09MutatingLiveBoundaryFailsPreflight` | Mutating live boundaries are blocked by default. |
 | AFR-T10 | `TestAFRT10SandboxedMutationRequiresDeclarationAndFlag` | A declared sandbox still requires the explicit side-effect flag. |
 | AFR-T11 | `TestAFRT11InternalInstrumentationDoesNotBecomeDivergence` | Added internal instrumentation does not become the causal divergence. |

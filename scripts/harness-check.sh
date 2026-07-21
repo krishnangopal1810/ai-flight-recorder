@@ -72,6 +72,7 @@ PY
 ./scripts/observe.sh --help >/dev/null
 ./scripts/worktree-env.sh --help >/dev/null
 ./scripts/completeness-smoke.sh --help >/dev/null
+./scripts/privacy-smoke.sh --help >/dev/null
 go run ./cmd/flight --help >/dev/null
 for command in record replay diff playback bisect capsule evaluator token serve; do
   go run ./cmd/flight "$command" --help >/dev/null
