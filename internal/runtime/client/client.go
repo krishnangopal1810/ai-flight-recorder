@@ -141,6 +141,12 @@ func (c *Client) CreateReplay(ctx context.Context, request types.CreateReplayReq
 	return result, err
 }
 
+func (c *Client) PreflightReplay(ctx context.Context, request types.CreateReplayRequest) (types.ReplayPreflight, error) {
+	var result types.ReplayPreflight
+	err := c.doJSON(ctx, http.MethodPost, "/api/v1/replays/preflight", request, &result)
+	return result, err
+}
+
 func (c *Client) GetJob(ctx context.Context, id string) (types.Job, error) {
 	var result types.Job
 	err := c.doJSON(ctx, http.MethodGet, "/api/v1/jobs/"+url.PathEscape(id), nil, &result)

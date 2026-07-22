@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -136,6 +137,20 @@ func TestAFRT04CReplayProvesTheEditedValueWasActuallyApplied(t *testing.T) {
 	}
 }
 
+func TestModelOverrideMustBeObservedInTheCandidate(t *testing.T) {
+	candidate := types.RunCapsule{Model: types.ModelConfiguration{RequestedModel: "model-v1"}}
+	if modelOverrideApplied("model-v2", candidate) {
+		t.Fatal("candidate using the recorded model was accepted as an applied override")
+	}
+	candidate.Model.RequestedModel = "model-v2"
+	if !modelOverrideApplied("model-v2", candidate) {
+		t.Fatal("candidate using the requested model was rejected")
+	}
+	if !modelOverrideApplied("", types.RunCapsule{}) {
+		t.Fatal("replay without a model experiment required model metadata")
+	}
+}
+
 func TestAFRT05RepeatedTrialsNeverClaimFalseDeterminism(t *testing.T) {
 	for _, test := range []struct {
 		exact, total int
@@ -165,6 +180,21 @@ func TestAFRT06PlaybackSurvivesMissingReplayEvidence(t *testing.T) {
 	}
 }
 
+func TestAFRT06ReplayCompletenessRequiresRootInputAndEveryExternalBoundary(t *testing.T) {
+	capsule := types.RunCapsule{
+		Operations: []types.Operation{
+			{SpanID: "root", Kind: "agent", Name: "run"},
+			{SpanID: "model", ParentSpanID: "root", Kind: "llm", Name: "answer", Input: &types.PayloadRef{Digest: "sha256:request"}, Output: &types.PayloadRef{Digest: "sha256:response"}},
+		},
+		Provenance: types.Provenance{Entrypoint: &types.Entrypoint{Command: []string{"/agent"}, Image: "sha256:" + strings.Repeat("a", 64)}},
+	}
+	ComputeCompleteness(&capsule)
+	missing := capsule.Completeness["replay"].Missing
+	if !slices.ContainsFunc(missing, func(item types.MissingItem) bool { return item.Code == "root_input_missing" }) || !slices.ContainsFunc(missing, func(item types.MissingItem) bool { return item.Code == "boundary_declaration_missing" }) {
+		t.Fatalf("replay completeness = %#v", capsule.Completeness["replay"])
+	}
+}
+
 func TestAFRT10SandboxedMutationRequiresDeclarationAndFlag(t *testing.T) {
 	image := "sha256:" + strings.Repeat("a", 64)
 	source := types.RunCapsule{
@@ -173,13 +203,29 @@ func TestAFRT10SandboxedMutationRequiresDeclarationAndFlag(t *testing.T) {
 		Boundaries:   []types.Boundary{{LogicalKey: "email.send", ReplayPolicy: "live", SideEffect: "mutating", Sandbox: "email-test"}},
 	}
 	replays := NewReplayService(nil, nil, nil, acceptanceRunner{}, nil, nil, "")
-	err := replays.Preflight(context.Background(), source, types.CreateReplayRequest{})
+	err := replays.Preflight(context.Background(), source, types.CreateReplayRequest{SubstituteLLM: true})
 	var flightErr *types.FlightError
 	if !errors.As(err, &flightErr) || flightErr.Code != types.ErrUnsafeReplay {
 		t.Fatalf("mutation was not blocked without explicit flag: %v", err)
 	}
-	if err := replays.Preflight(context.Background(), source, types.CreateReplayRequest{AllowSandboxedSideEffects: true}); err != nil {
+	if err := replays.Preflight(context.Background(), source, types.CreateReplayRequest{SubstituteLLM: true, AllowSandboxedSideEffects: true}); err != nil {
 		t.Fatalf("declared sandbox was not accepted with explicit flag: %v", err)
+	}
+}
+
+func TestLiveModelModeRequiresARecordedLiveLLMBoundary(t *testing.T) {
+	source := types.RunCapsule{
+		Completeness: map[string]types.Completeness{"replay": {State: types.CompletenessReady}},
+		Provenance: types.Provenance{Entrypoint: &types.Entrypoint{
+			Command: []string{"/agent"}, Image: "sha256:" + strings.Repeat("a", 64),
+			ModelHosts: []string{"model.test.invalid"}, Environment: []string{"MODEL_TOKEN"},
+		}},
+	}
+	replays := NewReplayService(nil, nil, nil, acceptanceRunner{}, nil, map[string]string{"MODEL_TOKEN": "worker-only"}, "")
+	err := replays.Preflight(context.Background(), source, types.CreateReplayRequest{})
+	var flightErr *types.FlightError
+	if !errors.As(err, &flightErr) || flightErr.Details["issue_code"] != "live_model_boundary_missing" {
+		t.Fatalf("missing live LLM boundary = %v", err)
 	}
 }
 

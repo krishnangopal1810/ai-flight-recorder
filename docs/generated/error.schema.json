@@ -5,7 +5,7 @@
   "type": "object",
   "required": ["code", "message"],
   "properties": {
-    "code": {"enum": ["validation", "incomplete_capsule", "unmatched_boundary", "unsafe_replay", "authentication", "storage", "build", "evaluator", "inconclusive", "not_found", "conflict"]},
+	"code": {"enum": ["validation", "incomplete_capsule", "unmatched_boundary", "override_not_applied", "unsafe_replay", "authentication", "storage", "build", "evaluator", "inconclusive", "not_found", "conflict"]},
     "message": {"type": "string"}, "remediation": {"type": "string"}, "details": {"type": "object"}
   },
   "additionalProperties": true

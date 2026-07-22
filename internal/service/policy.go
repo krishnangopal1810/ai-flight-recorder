@@ -173,6 +173,22 @@ func truncatePolicyData(data []byte, maximum int, structured bool) ([]byte, bool
 func (p *PolicyEngine) walk(current string, value any, result *PolicyResult) (any, bool, error) {
 	switch typed := value.(type) {
 	case map[string]any:
+		// OTLP bytes are transiently tagged so the JSON boundary can carry them.
+		// Decode and apply policy to the raw bytes, then replace the tag with only
+		// the policy-safe base64 value before hashing or persistence.
+		if len(typed) == 1 {
+			if encoded, ok := typed["_flight_otlp_bytes_base64"].(string); ok {
+				raw, err := base64.RawStdEncoding.DecodeString(encoded)
+				if err != nil {
+					return nil, false, types.NewError(types.ErrValidation, "invalid tagged OTLP byte value", "emit a valid OTLP bytes AnyValue", err)
+				}
+				clean, excluded, err := p.applyRules(current, string(raw), result)
+				if err != nil || excluded {
+					return nil, excluded, err
+				}
+				return map[string]any{"_flight_otlp_bytes_base64": base64.RawStdEncoding.EncodeToString([]byte(clean))}, false, nil
+			}
+		}
 		out := make(map[string]any, len(typed))
 		for key, child := range typed {
 			clean, excluded, err := p.walk(current+"."+key, child, result)

@@ -138,6 +138,10 @@ func (r failingRetentionRepository) DeleteExpired(context.Context, time.Time) (i
 	return 2, r.err
 }
 
+func (r failingRetentionRepository) DeleteExpiredLogs(context.Context, time.Time) (int, error) {
+	return 0, nil
+}
+
 func TestAFRSEC004RetentionFailureEmitsPayloadFreeOperationalAlert(t *testing.T) {
 	injected := types.NewError(types.ErrStorage, "unsafe accounting seed must not be logged", "retain data", errors.New("private backend cause"))
 	var logs bytes.Buffer

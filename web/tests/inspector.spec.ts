@@ -31,18 +31,28 @@ test("add run explains the outcome and tracing prerequisite before technical set
   await page.getByRole("button", {name: "Tracing is installed — continue"}).click();
   const command = page.getByLabel("Your agent command");
   await command.fill("python my_agent.py");
-  await expect(page.locator(".generated-command code")).toContainText("record -- opentelemetry-instrument python my_agent.py");
+  await expect(page.locator(".generated-command code")).toContainText("record --project my-agent -- opentelemetry-instrument python my_agent.py");
   const screenshotPath = testInfo.outputPath("guided-add-run.png");
   await page.screenshot({path: screenshotPath, fullPage: true});
   await testInfo.attach("guided-add-run.png", {path: screenshotPath, contentType: "image/png"});
   const replaySetup = page.locator("details.replay-enablement");
   await expect(replaySetup.locator("pre")).not.toBeVisible();
   await replaySetup.getByText("Need to change a model or tool value and replay this run?").click();
-  await expect(replaySetup.locator("pre")).toBeVisible();
+  await replaySetup.getByRole("checkbox", {name: "Prepare this recording for controlled replay"}).check();
+  await expect(replaySetup.locator("pre").first()).toBeVisible();
+  await replaySetup.getByRole("button", {name: "TypeScript"}).click();
+  await expect(replaySetup).toContainText("@ai-flight-recorder/sdk");
+  await replaySetup.getByRole("button", {name: "Python"}).click();
+  await expect(replaySetup).toContainText("from flight_recorder import");
   await page.getByRole("button", {name: /Already running/}).click();
   await expect(page.getByRole("heading", {name: "Connect an agent that already sends traces"})).toBeVisible();
   await expect(page.getByLabel("Agent or project name")).toBeVisible();
   await expect(page.getByText("OTEL_EXPORTER_OTLP_ENDPOINT", {exact: false})).toBeVisible();
+  const deployedSetup = page.locator("details.replay-enablement");
+  await deployedSetup.getByText("Need to change a model or tool value and replay this run?").click();
+  await deployedSetup.getByLabel("Immutable deployed image ID").fill(`sha256:${"a".repeat(64)}`);
+  await deployedSetup.getByLabel("Container entrypoint JSON argv").fill('["python","/app/agent.py"]');
+  await expect(page.locator(".generated-command.standalone")).toContainText("FLIGHT_ENTRYPOINT_JSON");
   await page.getByRole("button", {name: /A recording file/}).click();
   await expect(page.getByRole("heading", {name: "Import a recorded run"})).toBeVisible();
   await expect(page.getByText("Download one from any recorded run")).toBeVisible();
@@ -94,7 +104,7 @@ test("failed run opens on a decision brief and lazy failure-path evidence", asyn
   await expect(page.getByText("boundary_response_missing", {exact: true})).not.toBeVisible();
   await page.getByText("Technical details", {exact: true}).click();
   await expect(page.getByText("boundary_response_missing", {exact: true})).toBeVisible();
-  await page.getByRole("button", {name: "Inspect the affected call"}).click();
+  await page.getByRole("button", {name: "Review the recorded run"}).click();
   await expect(page).toHaveURL(/\/runs\/afr_baseline\/understand\?operation=model/);
 });
 
@@ -120,7 +130,33 @@ test("a selected model output can be edited and replayed with recorded tools", a
   await page.getByRole("button", {name: "Replay from this change"}).click();
   await expect(page.getByRole("heading", {name: "Replay in progress"})).toBeVisible();
   expect(replayRequest?.overrides).toEqual([{boundary_id: "llm-boundary", target: "response", value: {decision: "approve", reason: "eligible"}}]);
-  expect(replayRequest?.substitute_llm).toBe(false);
+  expect(replayRequest?.substitute_llm).toBe(true);
+});
+
+test("replay stays disabled until request-specific preflight recovers", async ({page}) => {
+  const run = summary("baseline", "error", "ready");
+  await baseRoutes(page, [run]);
+  await page.route(/\/api\/v1\/capsules\/afr_baseline\/playback(?:\?.*)?$/, route => route.fulfill({json: playback(run)}));
+  await page.route("**/api/v1/capsules/afr_baseline/payloads/**", route => route.fulfill({body: '{"decision":"deny"}', contentType: "application/json"}));
+  await page.route("**/api/v1/replays/preflight", async route => {
+    const request = route.request().postDataJSON() as Record<string, unknown>;
+    const ready = typeof request.candidate_image === "string" && request.candidate_image.startsWith("sha256:");
+    await route.fulfill({json: ready ? {
+      state: "ready", issues: [], effective: {candidate_image: request.candidate_image, substitutions: ["llm.refund"], live_boundaries: [], allowed_hosts: [], environment_names: []},
+    } : {
+      state: "blocked", issues: [{code: "candidate_image_mutable", message: "Candidate image is mutable.", remediation: "Provide its sha256 image ID."}], effective: {candidate_image: request.candidate_image, substitutions: [], live_boundaries: [], allowed_hosts: [], environment_names: []},
+    }});
+  });
+  await page.goto("/runs/afr_baseline/reproduce");
+  await page.getByRole("button", {name: /Change code or configuration/}).click();
+  const candidate = page.getByLabel("Candidate image digest");
+  await candidate.fill("agent:latest");
+  await expect(page.getByText("Candidate image is mutable.")).toBeVisible();
+  await expect(page.getByRole("button", {name: "Replay from this change"})).toBeDisabled();
+  await expect(page.getByText(/record again with.*flight record --replay-ready/i)).toBeVisible();
+  await candidate.fill(`sha256:${"b".repeat(64)}`);
+  await expect(page.getByRole("heading", {name: "Ready for isolated replay"})).toBeVisible();
+  await expect(page.getByRole("button", {name: "Replay from this change"})).toBeEnabled();
 });
 
 test("comparison opens with the first important change and evidence discipline", async ({page}) => {
@@ -257,6 +293,38 @@ for (const viewport of [{width: 390, height: 844}, {width: 768, height: 1024}, {
   });
 }
 
+for (const viewport of [{width: 390, height: 844}, {width: 768, height: 1024}, {width: 1440, height: 900}]) {
+  test(`trace-correlated logs stay lazy and accessible at ${viewport.width}×${viewport.height}`, async ({page}) => {
+    await page.setViewportSize(viewport);
+    const run = summary("logs", "error", "ready");
+    const evidence = playback(run);
+    const logDigest = `sha256:${"b".repeat(64)}`;
+    evidence.capsule.logs = [
+      {id: `log_${"1".repeat(64)}`, span_id: "model", service_name: "refund-review-agent", timestamp: "2026-07-21T00:00:01.250Z", severity_number: 17, severity_text: "ERROR", event_name: "refund.denied", body: {digest: logDigest, media_type: "application/json", size: 19, state: "captured"}, scope_name: "refund.logs"},
+      {id: `log_${"2".repeat(64)}`, service_name: "refund-review-agent", timestamp: "2026-07-21T00:00:00.500Z", severity_number: 9, severity_text: "INFO", event_name: "run.started", scope_name: "refund.logs"},
+    ];
+    evidence.payloads.push({digest: logDigest, availability: "available", media_type: "application/json", size: 19, references: ["logs[0].body"]});
+    let payloadRequests = 0;
+    await baseRoutes(page, [run]);
+    await page.route(/\/api\/v1\/capsules\/afr_logs\/playback(?:\?.*)?$/, route => route.fulfill({json: evidence}));
+    await page.route("**/api/v1/capsules/afr_logs/payloads/**", route => {
+      payloadRequests++;
+      return route.fulfill({body: '{"message":"denied"}', contentType: "application/json"});
+    });
+    await page.goto("/runs/afr_logs/understand?operation=model");
+    await expect(page.getByRole("heading", {name: "Run logs"})).toBeVisible();
+    await expect(page.getByRole("heading", {name: "Logs", exact: true})).toBeVisible();
+    await expect(page.getByText("refund.denied")).toBeVisible();
+    await expect(page.getByText("+250 ms")).toBeVisible();
+    await expect(page.getByText("run.started")).toBeVisible();
+    expect(payloadRequests).toBe(0);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    await page.locator('.trace-logs[aria-label="Logs"]').getByRole("button", {name: "View recorded value"}).click();
+    await expect(page.getByText(/"message": "denied"/)).toBeVisible();
+    expect(payloadRequests).toBe(1);
+  });
+}
+
 test("keyboard navigation starts with a working skip link", async ({page}) => {
   await baseRoutes(page, []);
   await page.goto("/runs");
@@ -270,6 +338,17 @@ test("keyboard navigation starts with a working skip link", async ({page}) => {
 
 async function baseRoutes(page: import("@playwright/test").Page, runs: Record<string, unknown>[]) {
   await page.route("**/api/v1/session", route => route.fulfill({json: session(true)}));
+  await page.route("**/api/v1/replays/preflight", route => route.fulfill({json: {
+    state: "ready",
+    issues: [],
+    effective: {
+      candidate_image: `sha256:${"a".repeat(64)}`,
+      substitutions: ["llm.refund"],
+      live_boundaries: [],
+      allowed_hosts: [],
+      environment_names: [],
+    },
+  }}));
   await page.route(/\/api\/v1\/capsules(?:\?.*)?$/, route => route.fulfill({json: {items: runs}}));
   await page.route(/\/api\/v1\/capsules\/([^/?]+)$/, route => {
     const id = route.request().url().split("/").at(-1);

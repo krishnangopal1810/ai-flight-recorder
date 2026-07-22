@@ -55,13 +55,21 @@ export function explainReplayIssue(playback: Playback, issue: ReplayIssue): Repl
     fix: "Register the agent entrypoint before the run starts, then record the run again.",
   };
 
-  if (issue.code === "root_input_omitted" || issue.code === "root_input_truncated") return {
+	if (issue.code === "root_input_missing" || issue.code === "root_input_omitted" || issue.code === "root_input_truncated") return {
     ...base,
     title: "The agent’s starting input was not fully recorded",
     summary: "The original request cannot be supplied to the replayed agent.",
     why: "Replay needs the same starting input to reproduce the pipeline.",
     fix: "Allow the root input through the capture policy, then record the run again.",
   };
+
+	if (issue.code === "boundary_declaration_missing") return {
+		...base,
+		title: "An external call has no replay boundary",
+		summary: "Flight Recorder saw a model, retriever, tool, API, or MCP operation that has no declared replay policy.",
+		why: "Without a boundary, replay cannot safely decide whether to substitute, block, or allow the dependency.",
+		fix: "Wrap the call with the Python or TypeScript boundary helper, choose a stable logical key and replay policy, then record again.",
+	};
 
   if (issue.code === "tool_definition_omitted" || issue.code === "tool_definition_truncated") return {
     ...base,

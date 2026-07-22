@@ -38,19 +38,45 @@ func NewReplayService(repo repository.Repository, capsules *CapsuleService, rece
 }
 
 func (s *ReplayService) Create(ctx context.Context, request types.CreateReplayRequest) (types.Job, error) {
-	source, err := s.capsules.Get(ctx, request.SourceCapsuleID, true)
+	prepared, err := s.prepareReplay(ctx, request)
 	if err != nil {
 		return types.Job{}, err
+	}
+	jobRequest := types.ReplayJobRequest{Plan: prepared.plan, Envelope: prepared.envelope, GatewayImage: s.gatewayImage, AllowedHosts: prepared.allowedHosts}
+	encoded, _ := json.Marshal(jobRequest)
+	now := s.clock()
+	job := types.Job{ID: uuid.NewString(), Kind: "replay", State: types.JobQueued, Request: encoded, CreatedAt: now, UpdatedAt: now}
+	if err := s.repository.PutJob(ctx, job); err != nil {
+		return types.Job{}, err
+	}
+	event, _ := json.Marshal(map[string]any{"plan_digest": prepared.plan.PlanDigest, "substitutions": prepared.substitutions, "live_boundaries": prepared.live, "overrides": prepared.plan.Overrides})
+	_ = s.repository.AppendJobEvent(ctx, types.JobEvent{JobID: job.ID, Type: "queued", Data: event, Time: now})
+	s.appendStage(ctx, job.ID, "preflight", "completed", "Integrity, entrypoint, isolation, boundaries, destinations, credentials, and side-effect policy passed.")
+	return job, nil
+}
+
+type preparedReplay struct {
+	plan          types.ReplayPlan
+	envelope      json.RawMessage
+	substitutions []string
+	live          []string
+	allowedHosts  []string
+}
+
+func (s *ReplayService) prepareReplay(ctx context.Context, request types.CreateReplayRequest) (preparedReplay, error) {
+	source, err := s.capsules.GetWithoutLogs(ctx, request.SourceCapsuleID)
+	if err != nil {
+		return preparedReplay{}, err
 	}
 	for index := range request.Overrides {
 		prepared, prepareErr := s.capsules.PrepareReplayOverride(request.Overrides[index].Value)
 		if prepareErr != nil {
-			return types.Job{}, prepareErr
+			return preparedReplay{}, preflightBoundaryError("replay_override_policy_restricted", types.ErrValidation, "replay override contains policy-restricted content", "remove or replace the restricted value before replay", request.Overrides[index].BoundaryID, prepareErr)
 		}
 		request.Overrides[index].Value = prepared
 	}
 	if err := s.Preflight(ctx, source, request); err != nil {
-		return types.Job{}, err
+		return preparedReplay{}, err
 	}
 	revision := request.CandidateCommit
 	if revision == "" {
@@ -60,9 +86,9 @@ func (s *ReplayService) Create(ctx context.Context, request types.CreateReplayRe
 	if request.CandidateImage != "" {
 		entrypoint.Image = request.CandidateImage
 	}
-	environment, environmentErr := s.environmentNames(entrypoint.Environment, request.Environment)
+	environment, environmentErr := s.environmentNames(entrypoint.Environment, request.Environment, replayUsesLiveBoundary(source, request))
 	if environmentErr != nil {
-		return types.Job{}, environmentErr
+		return preparedReplay{}, environmentErr
 	}
 	plan := types.ReplayPlan{SchemaVersion: types.SchemaVersion, SourceCapsuleID: source.CapsuleID, Model: request.Model, Revision: revision, CandidateDirtyDigest: request.CandidateDirtyDigest, CandidateSourceDigest: request.CandidateSourceDigest, Entrypoint: entrypoint, SubstituteLLM: request.SubstituteLLM, AllowSandboxedSideEffects: request.AllowSandboxedSideEffects, Repetitions: request.Repetitions, PassThreshold: request.PassThreshold, Environment: environment, Overrides: request.Overrides, MatchingRules: map[string]types.MatchingRule{}}
 	if plan.Repetitions <= 0 {
@@ -79,24 +105,14 @@ func (s *ReplayService) Create(ctx context.Context, request types.CreateReplayRe
 	}
 	canonical, err := CanonicalJSON(plan)
 	if err != nil {
-		return types.Job{}, err
+		return preparedReplay{}, err
 	}
 	plan.PlanDigest = DigestBytes(canonical)
 	envelope, substitutions, live, allowedHosts, err := s.envelope(ctx, source, plan)
 	if err != nil {
-		return types.Job{}, err
+		return preparedReplay{}, err
 	}
-	jobRequest := types.ReplayJobRequest{Plan: plan, Envelope: envelope, GatewayImage: s.gatewayImage, AllowedHosts: allowedHosts}
-	encoded, _ := json.Marshal(jobRequest)
-	now := s.clock()
-	job := types.Job{ID: uuid.NewString(), Kind: "replay", State: types.JobQueued, Request: encoded, CreatedAt: now, UpdatedAt: now}
-	if err := s.repository.PutJob(ctx, job); err != nil {
-		return types.Job{}, err
-	}
-	event, _ := json.Marshal(map[string]any{"plan_digest": plan.PlanDigest, "substitutions": substitutions, "live_boundaries": live, "overrides": plan.Overrides})
-	_ = s.repository.AppendJobEvent(ctx, types.JobEvent{JobID: job.ID, Type: "queued", Data: event, Time: now})
-	s.appendStage(ctx, job.ID, "preflight", "completed", "Integrity, entrypoint, isolation, boundaries, destinations, credentials, and side-effect policy passed.")
-	return job, nil
+	return preparedReplay{plan: plan, envelope: envelope, substitutions: substitutions, live: live, allowedHosts: allowedHosts}, nil
 }
 
 func replayRootInput(operations []types.Operation) *types.PayloadRef {
@@ -106,59 +122,6 @@ func replayRootInput(operations []types.Operation) *types.PayloadRef {
 		}
 	}
 	return nil
-}
-
-func (s *ReplayService) Preflight(ctx context.Context, source types.RunCapsule, request types.CreateReplayRequest) error {
-	completeness := CompletenessReport(source).Replay
-	if completeness.State != types.CompletenessReady {
-		details := map[string]any{}
-		if len(completeness.Missing) > 0 {
-			details["missing"] = completeness.Missing
-		}
-		if len(completeness.Ambiguities) > 0 {
-			details["ambiguities"] = completeness.Ambiguities
-		}
-		if len(completeness.AmbiguityDetails) > 0 {
-			details["ambiguity_details"] = completeness.AmbiguityDetails
-		}
-		return &types.FlightError{Code: types.ErrIncompleteCapsule, Message: "capsule is not replay-ready", Remediation: "resolve the named missing or ambiguous entrypoint, artifact, or boundary prerequisites", Details: details}
-	}
-	if source.Provenance.Entrypoint == nil || len(source.Provenance.Entrypoint.Command) == 0 {
-		return types.NewError(types.ErrIncompleteCapsule, "replay entrypoint is missing", "register an argv entrypoint in the source execution", nil)
-	}
-	if source.Provenance.Entrypoint.Image == "" && request.CandidateImage == "" {
-		return types.NewError(types.ErrBuild, "replay image is missing", "record an immutable OCI image reference in the entrypoint", nil)
-	}
-	if request.CandidateImage == "" && !immutableImage(source.Provenance.Entrypoint.Image) {
-		return types.NewError(types.ErrBuild, "recorded replay image is not content-addressed", "use flight.yaml to build the candidate or record an image digest", nil)
-	}
-	if request.CandidateImage != "" && !strings.HasPrefix(request.CandidateImage, "sha256:") {
-		return types.NewError(types.ErrBuild, "candidate image is not content-addressed", "build the candidate and provide its sha256 image ID", nil)
-	}
-	if request.Repetitions > 50 || request.PassThreshold < 0 || request.PassThreshold > 1 {
-		return types.NewError(types.ErrValidation, "replay trial settings are invalid", "use at most 50 repetitions and a pass threshold from 0 to 1", nil)
-	}
-	if err := validateReplayOverrides(source, request); err != nil {
-		return err
-	}
-	responseOverrides := map[string]bool{}
-	for _, override := range request.Overrides {
-		responseOverrides[override.BoundaryID] = override.Target == "response"
-	}
-	for _, boundary := range source.Boundaries {
-		if responseOverrides[boundary.ID] {
-			continue
-		}
-		if boundary.ReplayPolicy == "live" && (boundary.SideEffect == "mutating" || boundary.SideEffect == "unknown") {
-			if !request.AllowSandboxedSideEffects || boundary.Sandbox == "" {
-				return types.NewError(types.ErrUnsafeReplay, "a live boundary is mutating or unknown", "substitute it, or declare a sandbox and pass --allow-sandboxed-side-effects", nil)
-			}
-			if source.Provenance.Entrypoint.Sandboxes[boundary.Sandbox] == "" {
-				return types.NewError(types.ErrUnsafeReplay, "declared boundary sandbox has no isolated destination", "add the sandbox destination to flight.yaml", nil)
-			}
-		}
-	}
-	return s.runner.Available(ctx)
 }
 
 func (s *ReplayService) RunClaimed(ctx context.Context, job types.Job) error {
@@ -192,7 +155,7 @@ func (s *ReplayService) RunClaimed(ctx context.Context, job types.Job) error {
 	for _, name := range request.Plan.Environment {
 		environment[name] = s.credentials[name]
 	}
-	source, err := s.capsules.Get(ctx, request.Plan.SourceCapsuleID, true)
+	source, err := s.capsules.GetWithoutLogs(ctx, request.Plan.SourceCapsuleID)
 	if err != nil {
 		return s.failJob(ctx, &job, err)
 	}
@@ -204,7 +167,7 @@ func (s *ReplayService) RunClaimed(ctx context.Context, job types.Job) error {
 	}
 	jobResult := types.ReplayJobResult{SourceCapsuleID: request.Plan.SourceCapsuleID, CandidateImage: request.Plan.Entrypoint.Image, CandidateSource: request.Plan.CandidateSourceDigest, Overrides: request.Plan.Overrides}
 	exact := 0
-	overrideFailed := false
+	overrideFailed, modelOverrideFailed := false, false
 	for index := range repetitions {
 		s.appendStage(ctx, job.ID, "starting_isolated_application", "running", "Starting the non-root candidate on a private OCI network.")
 		s.appendStage(ctx, job.ID, "replaying_recorded_dependencies", "running", "Recorded boundaries will be substituted and undeclared calls will fail closed.")
@@ -223,6 +186,9 @@ func (s *ReplayService) RunClaimed(ctx context.Context, job types.Job) error {
 			return s.failJob(ctx, &job, types.NewError(types.ErrIncompleteCapsule, "replay produced no candidate capsule", "ensure the candidate exports an opted-in root trace to OTEL_EXPORTER_OTLP_ENDPOINT", nil))
 		}
 		overrideResults := verifyReplayOverrides(source, candidates[0], request.Plan.Overrides)
+		if !modelOverrideApplied(request.Plan.Model, candidates[0]) {
+			modelOverrideFailed = true
+		}
 		if index == 0 {
 			jobResult.OverrideResults = overrideResults
 		}
@@ -246,7 +212,7 @@ func (s *ReplayService) RunClaimed(ctx context.Context, job types.Job) error {
 		jobResult.ExitCode, jobResult.DurationMillis = result.ExitCode, jobResult.DurationMillis+result.Duration.Milliseconds()
 		trialJSON, _ := json.Marshal(trial)
 		_ = s.repository.AppendJobEvent(ctx, types.JobEvent{JobID: job.ID, Type: "trial_completed", Data: trialJSON, Time: s.clock()})
-		if result.ExitCode != 0 || overrideFailed {
+		if result.ExitCode != 0 || overrideFailed || modelOverrideFailed {
 			break
 		}
 	}
@@ -262,7 +228,10 @@ func (s *ReplayService) RunClaimed(ctx context.Context, job types.Job) error {
 	if jobResult.Outcome == "inconclusive" {
 		job.State = types.JobInconclusive
 	}
-	if overrideFailed {
+	if modelOverrideFailed {
+		job.State = types.JobFailed
+		job.Error = types.NewError(types.ErrOverrideNotApplied, "the requested model override was not applied", "make the agent read FLIGHT_REPLAY_MODEL and emit the effective gen_ai.request.model", nil)
+	} else if overrideFailed {
 		job.State = types.JobFailed
 		job.Error = types.NewError(types.ErrUnmatchedBoundary, "the edited value was not applied", "the selected operation received a different request during replay; reproduce the recorded request or edit the model input instead", nil)
 	} else if jobResult.ExitCode != 0 {
@@ -275,6 +244,10 @@ func (s *ReplayService) RunClaimed(ctx context.Context, job types.Job) error {
 	_ = s.repository.AppendJobEvent(ctx, types.JobEvent{JobID: job.ID, Type: string(job.State), Data: encoded, Time: job.UpdatedAt})
 	s.appendStage(ctx, job.ID, "complete", string(job.State), "Replay evidence and the candidate comparison are durable.")
 	return nil
+}
+
+func modelOverrideApplied(requested string, candidate types.RunCapsule) bool {
+	return requested == "" || candidate.Model.RequestedModel == requested
 }
 
 func verifyReplayOverrides(source, candidate types.RunCapsule, overrides []types.ReplayOverride) []types.ReplayOverrideResult {
@@ -332,25 +305,6 @@ func verifyReplayOverrides(source, candidate types.RunCapsule, overrides []types
 		results = append(results, result)
 	}
 	return results
-}
-
-func (s *ReplayService) environmentNames(declared, requested []string) ([]string, error) {
-	allowed := map[string]bool{}
-	for _, name := range declared {
-		allowed[name] = true
-	}
-	if len(requested) == 0 {
-		requested = append([]string(nil), declared...)
-	}
-	for _, name := range requested {
-		if !allowed[name] {
-			return nil, types.NewError(types.ErrUnsafeReplay, "replay credential was not declared by the entrypoint", "add the environment name to flight.yaml", nil)
-		}
-		if _, ok := s.credentials[name]; !ok {
-			return nil, types.NewError(types.ErrUnsafeReplay, "declared replay credential is unavailable", "set FLIGHT_REPLAY_CREDENTIAL_"+name+" on the worker", nil)
-		}
-	}
-	return uniqueStrings(requested), nil
 }
 
 func executionEquivalent(result types.DiffResult) bool {
@@ -451,37 +405,6 @@ func (s *ReplayService) envelope(ctx context.Context, source types.RunCapsule, p
 	envelope := map[string]any{"schema_version": types.SchemaVersion, "plan": plan, "boundaries": boundaries, "substitutions": substitutions, "live_boundaries": live}
 	encoded, err := CanonicalJSON(envelope)
 	return encoded, substitutions, live, allowedHosts, err
-}
-
-func validateReplayOverrides(source types.RunCapsule, request types.CreateReplayRequest) error {
-	if len(request.Overrides) > 1 {
-		return types.NewError(types.ErrValidation, "a replay may change only one recorded value", "create separate controlled replays for separate changes", nil)
-	}
-	for _, override := range request.Overrides {
-		if override.BoundaryID == "" || (override.Target != "request" && override.Target != "response") {
-			return types.NewError(types.ErrValidation, "replay override target is invalid", "choose a recorded boundary input or output", nil)
-		}
-		if len(override.Value) == 0 || len(override.Value) > 1<<20 || !json.Valid(override.Value) {
-			return types.NewError(types.ErrValidation, "replay override must be one JSON value under 1 MiB", "enter valid JSON or attach larger data as an artifact", nil)
-		}
-		var boundary *types.Boundary
-		for index := range source.Boundaries {
-			if source.Boundaries[index].ID == override.BoundaryID {
-				boundary = &source.Boundaries[index]
-				break
-			}
-		}
-		if boundary == nil {
-			return types.NewError(types.ErrUnmatchedBoundary, "the selected replay boundary does not exist", "choose a boundary from the recorded execution", nil)
-		}
-		if override.Target == "request" && boundary.Class != "llm" {
-			return types.NewError(types.ErrValidation, "only model input overrides are supported", "change a tool or model output, or select a model input", nil)
-		}
-		if override.Target == "request" && request.SubstituteLLM {
-			return types.NewError(types.ErrValidation, "a changed model input requires a declared live model call", "keep the selected model boundary live for this replay", nil)
-		}
-	}
-	return nil
 }
 
 func (s *ReplayService) failJob(ctx context.Context, job *types.Job, err error) error {

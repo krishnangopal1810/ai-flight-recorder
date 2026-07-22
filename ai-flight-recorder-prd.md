@@ -335,6 +335,20 @@ The service must compute completeness for playback, controlled replay, diff, and
 - **Acceptance:** Removing one required tool response from a fixture changes controlled replay to blocked while leaving playback available.
 - **Failure behavior:** Never silently downgrade from controlled replay to a live boundary call.
 
+#### AFR-ING-004 — Ingest trace-correlated OTLP logs (**P1**)
+
+The collector must accept standard OTLP Logs over HTTP and gRPC and attach policy-safe structured log evidence to its trace and, when present, its producing span. Python and TypeScript applications use thin opt-in helpers around their standard OpenTelemetry logging APIs; neither helper replaces a global trace or logging provider.
+
+- **Acceptance:** Equivalent Python and TypeScript reference agents export info, warning, and error records from root and child spans; the inspector shows span-attached records in the corresponding operation and unmatched or trace-level records under Run logs without eagerly loading bodies or attributes.
+- **Failure behavior:** Reject invalid, uncorrelatable, or late records through OTLP partial success; expire orphaned staged records; keep payloads out of diagnostics and operational telemetry. Missing or unavailable log payloads may degrade playback only and must not change operation alignment, diff, replay, evaluator, bisect, or first-divergence decisions.
+
+#### AFR-ING-005 — Integrate official OpenAI and LangChain clients (**P1**)
+
+The Python and TypeScript SDKs must provide explicit, opt-in wrappers for the official OpenAI Responses and Chat Completions clients and for LangChain chat models, retrievers, tools, and agent middleware. Wrappers must retain official result types, preserve exact ordered stream events without recording timing, emit standard OpenInference and OpenTelemetry GenAI attributes, and reuse an application-installed tracer provider. They must never globally monkey-patch a framework or client.
+
+- **Acceptance:** Equivalent Python and TypeScript tests run official OpenAI clients against a loopback JSON/SSE fixture and exercise LangChain messages, chunks, documents, tools, and middleware. Sync and async Python and async TypeScript streams replay the same ordered typed events while the configured dependency endpoint is unavailable. Nested LangChain and OpenAI wrappers create one logical boundary, structured outputs retain their declared type, and clean package installs can import every integration entrypoint.
+- **Failure behavior:** During recording, capture-only serialization or export failures produce content-free diagnostics without failing the application call. During replay, a missing, malformed, unsupported, incomplete, or ambiguous response fails before invoking the dependency; unknown and mutating tools remain substitute-only unless an explicit live policy and sandbox permit them.
+
 ### 7.3 Privacy and security
 
 #### AFR-SEC-001 — Apply policy before persistence (**P0**)

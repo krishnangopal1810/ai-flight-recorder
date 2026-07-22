@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: help bootstrap harness-check harness-static generate build test integration e2e security docs-check quality verify architecture-check dev-up dev-down observe
+.PHONY: help bootstrap harness-check harness-static generate build test integration e2e security secret-scan license-check docs-check quality verify architecture-check demo-check dev-up dev-down observe
 
 help:
 	@echo 'AI Flight Recorder development commands:'
@@ -11,9 +11,12 @@ help:
 	@echo '  make test               Run unit, SDK, and inspector tests'
 	@echo '  make integration        Run backend and OTLP conformance contracts'
 	@echo '  make security           Run privacy and live OCI isolation probes'
+	@echo '  make secret-scan        Scan repository history and worktree for credentials'
+	@echo '  make license-check      Audit Go dependency licenses and reviewed exceptions'
 	@echo '  make e2e                Run bundle and browser journeys'
 	@echo '  make quality            Emit the machine-readable quality report'
 	@echo '  make verify             Run every blocking repository gate'
+	@echo '  make demo-check         Validate the Docker-only public demo launcher'
 	@echo '  make dev-up/dev-down    Start or tear down this worktree stack'
 	@echo '  make observe QUERY=...  Query logs, metrics, capsules, traces, or job events'
 
@@ -44,6 +47,7 @@ build:
 
 test:
 	go test ./...
+	./scripts/demo-launcher-test.sh
 	cd sdk/python && uv run ruff check src tests ../../examples/reference-python ../../examples/investigation-agent && uv run mypy src ../../examples/reference-python && uv run mypy src ../../examples/investigation-agent && uv run pytest
 	cd sdk/typescript && npm test
 	cd examples/reference-typescript && npm test
@@ -60,11 +64,21 @@ security:
 	@if docker info >/dev/null 2>&1; then docker build --tag ai-flight-recorder:local --file deploy/Dockerfile . && ./scripts/playback-offline-smoke.sh; fi
 	go test -count=1 -tags=security ./tests/security/...
 
+secret-scan:
+	./scripts/scan-history-secrets.py
+
+license-check:
+	./scripts/check-go-licenses.sh
+	cd sdk/python && uv run --all-extras python ../../scripts/check-sdk-licenses.py
+
 architecture-check:
 	./scripts/check-architecture.sh
 
 docs-check:
 	./scripts/check-docs.sh
+
+demo-check:
+	./scripts/demo-launcher-test.sh
 
 quality:
 	./scripts/quality-report.sh

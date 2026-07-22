@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	collectorlogs "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	collectortrace "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -99,7 +100,8 @@ func (a *Application) Serve(ctx context.Context) error {
 		grpcOptions = append(grpcOptions, grpc.Creds(transport))
 	}
 	grpcServer := grpc.NewServer(grpcOptions...)
-	collectortrace.RegisterTraceServiceServer(grpcServer, a.Receiver)
+	collectortrace.RegisterTraceServiceServer(grpcServer, otlp.NewTraceService(a.Receiver))
+	collectorlogs.RegisterLogsServiceServer(grpcServer, otlp.NewLogsService(a.Receiver))
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -140,6 +142,15 @@ func (a *Application) Serve(ctx context.Context) error {
 
 func (a *Application) runRetention(ctx context.Context) {
 	run := func() {
+		orphaned, stagedErr := a.Repository.DeleteExpiredLogs(ctx, time.Now().UTC())
+		if stagedErr != nil {
+			a.Logger.Error("staged log retention failed", "code", errorCode(stagedErr), "log_count", orphaned)
+		} else if a.Receiver != nil {
+			a.Receiver.RecordOrphanedLogs(orphaned)
+			if orphaned > 0 {
+				_ = a.Capsules.QuarantineLogDiagnostic(ctx, "orphaned_log", orphaned)
+			}
+		}
 		deleted, err := a.Repository.DeleteExpired(ctx, time.Now().UTC())
 		if err != nil {
 			a.Logger.Error("retention evaluation failed", "code", errorCode(err), "capsule_count", deleted)

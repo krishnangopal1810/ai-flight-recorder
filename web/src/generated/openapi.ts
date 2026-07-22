@@ -4,6 +4,26 @@
  */
 
 export interface paths {
+    "/v1/logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Export trace-correlated OTLP log records
+         * @description Accepts standard OTLP Logs protobuf or JSON, optionally gzip encoded, using the ingest scope. Successful mixed batches report rejected records through OTLP partial success.
+         */
+        post: operations["exportOTLPLogs"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/session": {
         parameters: {
             query?: never;
@@ -158,6 +178,22 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["createReplay"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/replays/preflight": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["preflightReplay"];
         delete?: never;
         options?: never;
         head?: never;
@@ -347,6 +383,7 @@ export interface components {
         SessionInfo: {
             schema_version: string;
             service_version: string;
+            release_version?: string;
             /** @enum {unknown} */
             auth_mode: "token" | "local_bypass";
             connected: boolean;
@@ -368,6 +405,7 @@ export interface components {
             candidate_commit?: string;
             candidate_dirty_digest?: string;
             candidate_source_digest?: string;
+            /** @default true */
             substitute_llm: boolean;
             allow_sandboxed_side_effects: boolean;
             repetitions?: number;
@@ -387,6 +425,26 @@ export interface components {
             target: "request" | "response";
             applied: boolean;
             message: string;
+        };
+        ReplayPreflightIssue: {
+            code: string;
+            message: string;
+            remediation: string;
+            boundary_id?: string;
+        };
+        ReplayPreflightEffective: {
+            candidate_image?: string;
+            substitutions: string[];
+            live_boundaries: string[];
+            allowed_hosts: string[];
+            environment_names: string[];
+            model?: string;
+        };
+        ReplayPreflight: {
+            /** @enum {unknown} */
+            state: "ready" | "blocked";
+            issues: components["schemas"]["ReplayPreflightIssue"][];
+            effective: components["schemas"]["ReplayPreflightEffective"];
         };
         ReplayJobResult: {
             source_capsule_id: string;
@@ -532,6 +590,7 @@ export interface components {
             timeout: number;
             environment?: string[];
             model_hosts?: string[];
+            model_override?: boolean;
             sandboxes?: {
                 [key: string]: string;
             };
@@ -629,6 +688,26 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        log_record: {
+            id: string;
+            span_id?: string;
+            service_name?: string;
+            /** Format: date-time */
+            timestamp: string;
+            /** Format: date-time */
+            observed_timestamp?: string;
+            severity_number: number;
+            severity_text?: string;
+            event_name?: string;
+            body?: components["schemas"]["payload"];
+            attributes?: components["schemas"]["payload"];
+            dropped_attributes_count?: number;
+            scope_name?: string;
+            scope_version?: string;
+            scope_schema_url?: string;
+        } & {
+            [key: string]: unknown;
+        };
         /** Replay Boundary */
         "boundary.schema": {
             id: string;
@@ -717,6 +796,7 @@ export interface components {
             model_configuration?: components["schemas"]["model_configuration"];
             artifacts?: components["schemas"]["artifact"][];
             operations: components["schemas"]["operation"][];
+            logs?: components["schemas"]["log_record"][];
             boundaries?: components["schemas"]["boundary.schema"][];
             privacy: components["schemas"]["privacy"];
             evaluations?: components["schemas"]["evaluation"][];
@@ -762,6 +842,7 @@ export interface components {
                     timeout: number;
                     environment?: string[];
                     model_hosts?: string[];
+                    model_override?: boolean;
                     sandboxes?: {
                         [key: string]: string;
                     };
@@ -835,6 +916,26 @@ export interface components {
                         [key: string]: string;
                     };
                     sequence: number;
+                } & {
+                    [key: string]: unknown;
+                };
+                log_record: {
+                    id: string;
+                    span_id?: string;
+                    service_name?: string;
+                    /** Format: date-time */
+                    timestamp: string;
+                    /** Format: date-time */
+                    observed_timestamp?: string;
+                    severity_number: number;
+                    severity_text?: string;
+                    event_name?: string;
+                    body?: components["schemas"]["payload"];
+                    attributes?: components["schemas"]["payload"];
+                    dropped_attributes_count?: number;
+                    scope_name?: string;
+                    scope_version?: string;
+                    scope_schema_url?: string;
                 } & {
                     [key: string]: unknown;
                 };
@@ -1026,7 +1127,7 @@ export interface components {
         /** Stable Flight Error */
         "error.schema": {
             /** @enum {unknown} */
-            code: "validation" | "incomplete_capsule" | "unmatched_boundary" | "unsafe_replay" | "authentication" | "storage" | "build" | "evaluator" | "inconclusive" | "not_found" | "conflict";
+            code: "validation" | "incomplete_capsule" | "unmatched_boundary" | "override_not_applied" | "unsafe_replay" | "authentication" | "storage" | "build" | "evaluator" | "inconclusive" | "not_found" | "conflict";
             message: string;
             remediation?: string;
             details?: Record<string, never>;
@@ -1092,6 +1193,37 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    exportOTLPLogs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/x-protobuf": string;
+                "application/protobuf": string;
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description OTLP ExportLogsServiceResponse, including partial success when records were rejected */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/x-protobuf": string;
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
     inspectSession: {
         parameters: {
             query?: never;
@@ -1328,6 +1460,30 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Job"];
+                };
+            };
+        };
+    };
+    preflightReplay: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateReplayRequest"];
+            };
+        };
+        responses: {
+            /** @description Side-effect-free replay readiness result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReplayPreflight"];
                 };
             };
         };

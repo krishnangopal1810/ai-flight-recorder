@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from flight_recorder import BoundaryError, boundary, boundary_async
+from flight_recorder import BoundaryError, boundary, boundary_async, record_run_async
 from flight_recorder import boundary as boundary_module
 
 
@@ -39,9 +39,7 @@ def test_metadata_failure_never_fails_production_request(capsys, monkeypatch):
             self.attributes[key] = value
 
     span = RecordingSpan()
-    monkeypatch.setattr(
-        boundary_module.__globals__["trace"], "get_current_span", lambda: span
-    )
+    monkeypatch.setattr(boundary_module.__globals__["trace"], "get_current_span", lambda: span)
     marker = object()
     assert boundary("opaque", marker, lambda: "ok", boundary_class="api") == "ok"
     diagnostic = capsys.readouterr().err
@@ -79,9 +77,7 @@ def test_substitutes_exact_recorded_boundary(tmp_path, monkeypatch):
     ) == {"temp": 24}
 
 
-def test_model_input_override_is_passed_to_request_aware_live_callback(
-    tmp_path, monkeypatch
-):
+def test_model_input_override_is_passed_to_request_aware_live_callback(tmp_path, monkeypatch):
     edited = {"messages": [{"role": "system", "content": "approve eligible refunds"}]}
     plan = {
         "live_boundaries": ["llm.decision"],
@@ -208,3 +204,83 @@ async def test_async_boundary_without_replay():
         await boundary_async("async", {}, call, boundary_class="api", side_effect="read_only")
         == "ok"
     )
+
+
+def test_unique_digest_matches_before_occurrence(tmp_path, monkeypatch):
+    first = {"id": "first"}
+    second = {"id": "second"}
+    plan = {
+        "substitutions": ["lookup"],
+        "boundaries": [
+            {
+                "logical_key": "lookup",
+                "boundary_class": "api",
+                "occurrence": 0,
+                "request_digest": digest(first),
+                "response": "first-result",
+            },
+            {
+                "logical_key": "lookup",
+                "boundary_class": "api",
+                "occurrence": 1,
+                "request_digest": digest(second),
+                "response": "second-result",
+            },
+        ],
+    }
+    filename = tmp_path / "plan.json"
+    filename.write_text(json.dumps(plan))
+    monkeypatch.setenv("FLIGHT_REPLAY_PLAN", str(filename))
+    assert boundary("lookup", second, lambda: pytest.fail(), boundary_class="api") == (
+        "second-result"
+    )
+
+
+def test_duplicate_digest_and_occurrence_is_ambiguous(tmp_path, monkeypatch):
+    request = {"id": "same"}
+    recorded = {
+        "logical_key": "lookup",
+        "boundary_class": "api",
+        "occurrence": 0,
+        "request_digest": digest(request),
+        "response": "result",
+    }
+    filename = tmp_path / "plan.json"
+    filename.write_text(
+        json.dumps({"substitutions": ["lookup"], "boundaries": [recorded, recorded]})
+    )
+    monkeypatch.setenv("FLIGHT_REPLAY_PLAN", str(filename))
+    with pytest.raises(BoundaryError, match="ambiguous replay match"):
+        boundary("lookup", request, lambda: pytest.fail(), boundary_class="api")
+
+
+async def test_concurrent_root_runs_have_independent_occurrences(tmp_path, monkeypatch):
+    request = {"id": "same"}
+    filename = tmp_path / "plan.json"
+    filename.write_text(
+        json.dumps(
+            {
+                "substitutions": ["lookup"],
+                "boundaries": [
+                    {
+                        "logical_key": "lookup",
+                        "boundary_class": "api",
+                        "occurrence": 0,
+                        "request_digest": digest(request),
+                        "response": "recorded",
+                    }
+                ],
+            }
+        )
+    )
+    monkeypatch.setenv("FLIGHT_REPLAY_PLAN", str(filename))
+
+    async def run(_input):
+        return await boundary_async(
+            "lookup", request, lambda: pytest.fail(), boundary_class="api"
+        )
+
+    assert await asyncio.gather(
+        record_run_async("root.one", {}, run),
+        record_run_async("root.two", {}, run),
+    ) == ["recorded", "recorded"]

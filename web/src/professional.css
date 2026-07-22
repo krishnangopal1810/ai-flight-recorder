@@ -94,11 +94,9 @@ input::placeholder, textarea::placeholder { color: #98a29a; }
 .brand-mark {
   border: 0;
   border-radius: 10px;
-  background: var(--lime);
   transform: none;
   box-shadow: 0 5px 14px rgb(36 107 71 / 18%);
 }
-.brand-mark i { border-radius: 999px; background: #fff; }
 .connection-intro { padding-top: 42px; }
 .connection-intro h1 { max-width: 560px; font-weight: 720; line-height: 1.08; }
 .token-input { overflow: hidden; border-color: #cbd5cd; border-radius: 10px; background: #fff; }
@@ -117,7 +115,7 @@ input::placeholder, textarea::placeholder { color: #98a29a; }
   backdrop-filter: blur(18px) saturate(130%);
 }
 .brand-button { gap: 11px; }
-.brand-button .brand-mark { width: 30px; height: 30px; padding: 6px; border-radius: 9px; }
+.brand-button .brand-mark { width: 30px; height: 30px; border-radius: 9px; }
 .brand-button strong { color: #17211a; font-size: 14px; letter-spacing: -.015em; }
 .brand-button small { color: #7b867e; }
 .app-header nav { margin-left: 46px; gap: 6px; padding: 10px 0; }
@@ -259,7 +257,8 @@ input::placeholder, textarea::placeholder { color: #98a29a; }
 .operation-outcome.success { color: #246b47; }
 .operation-panel { border-color: var(--line); background: #fbfcfb; }
 .operation-summary div { border-radius: 8px; background: #f1f4f2; }
-.payload-disclosure, .boundary-card, .usage-card, .evidence-payload { border-color: var(--line); border-radius: 10px; background: #fff; }
+.payload-disclosure, .boundary-card, .usage-card, .evidence-payload, .trace-logs { border-color: var(--line); border-radius: 10px; background: #fff; }
+.trace-log { border-radius: 7px; background: #f5f8f5; }
 .payload-disclosure pre, .before-after pre, .evidence-payload pre,
 .guide-step pre, .copy-command, .json-editor textarea, .raw-json section {
   border-color: #26372c;

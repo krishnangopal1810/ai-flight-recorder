@@ -70,6 +70,16 @@ func (s *CapsuleService) Capture(ctx context.Context, request CaptureRequest) (t
 		}
 		return types.RunCapsule{}, types.NewError(types.ErrValidation, "root execution cannot be identified", "instrument the root span and include a trace ID", nil)
 	}
+	stagedLogs, err := s.repository.SealLogs(ctx, request.ProjectID, request.TraceID, s.clock())
+	if err != nil {
+		return types.RunCapsule{}, err
+	}
+	completedLogs := false
+	defer func() {
+		if !completedLogs {
+			_ = s.repository.ReleaseLogs(context.Background(), request.ProjectID, request.TraceID)
+		}
+	}()
 	capsule := types.RunCapsule{
 		SchemaVersion: types.SchemaVersion, TraceID: request.TraceID, SourceCapsuleID: request.SourceCapsuleID,
 		StartTime: request.StartTime, EndTime: request.EndTime, TerminalStatus: request.TerminalStatus,
@@ -216,6 +226,24 @@ func (s *CapsuleService) Capture(ctx context.Context, request CaptureRequest) (t
 			capsule.Boundaries = append(capsule.Boundaries, sanitizedBoundary)
 		}
 	}
+	seenLogs := map[string]bool{}
+	for _, staged := range stagedLogs {
+		if staged.Record.ID == "" || seenLogs[staged.Record.ID] {
+			continue
+		}
+		seenLogs[staged.Record.ID] = true
+		capsule.Logs = append(capsule.Logs, staged.Record)
+		for digest, data := range staged.Payloads {
+			payloads[digest] = data
+		}
+		mergePolicyDelta(&capsule.Privacy, staged.Policy)
+	}
+	sort.Slice(capsule.Logs, func(i, j int) bool {
+		if capsule.Logs[i].Timestamp.Equal(capsule.Logs[j].Timestamp) {
+			return capsule.Logs[i].ID < capsule.Logs[j].ID
+		}
+		return capsule.Logs[i].Timestamp.Before(capsule.Logs[j].Timestamp)
+	})
 	for _, captured := range request.Artifacts {
 		artifact := captured.Artifact
 		declaredPayload := artifact.Payload
@@ -265,6 +293,8 @@ func (s *CapsuleService) Capture(ctx context.Context, request CaptureRequest) (t
 	if err := s.repository.PutCapsule(ctx, capsule, payloads); err != nil {
 		return types.RunCapsule{}, err
 	}
+	completedLogs = true
+	_ = s.repository.CompleteLogs(ctx, request.ProjectID, request.TraceID)
 	return capsule, nil
 }
 
@@ -296,6 +326,17 @@ func (s *CapsuleService) Get(ctx context.Context, id string, verify bool) (types
 	return capsule, nil
 }
 
+func (s *CapsuleService) GetWithoutLogs(ctx context.Context, id string) (types.RunCapsule, error) {
+	capsule, err := s.repository.GetCapsule(ctx, id)
+	if err != nil {
+		return types.RunCapsule{}, err
+	}
+	if err := VerifyCapsuleWithoutLogs(capsule, func(digest string) ([]byte, error) { return s.repository.LoadPayload(ctx, digest) }); err != nil {
+		return types.RunCapsule{}, err
+	}
+	return capsule, nil
+}
+
 func (s *CapsuleService) List(ctx context.Context, project string, limit int) ([]types.CapsuleSummary, error) {
 	return s.repository.ListCapsules(ctx, project, limit)
 }
@@ -318,6 +359,12 @@ func (s *CapsuleService) SanitizeEvidence(name string, data []byte) ([]byte, err
 
 func (s *CapsuleService) QuarantineDiagnostic(ctx context.Context, reason, traceID string, operationCount int) error {
 	return s.repository.PutQuarantine(ctx, repository.QuarantineRecord{ID: uuid.NewString(), Reason: reason, Safe: map[string]any{"trace_id_hash": DigestBytes([]byte(traceID)), "operation_count": operationCount}, CreatedAt: s.clock()})
+}
+
+// QuarantineLogDiagnostic records only aggregate record counts. Log bodies,
+// attributes, trace IDs, and span IDs never enter operational diagnostics.
+func (s *CapsuleService) QuarantineLogDiagnostic(ctx context.Context, reason string, recordCount int) error {
+	return s.repository.PutQuarantine(ctx, repository.QuarantineRecord{ID: uuid.NewString(), Reason: reason, Safe: map[string]any{"record_count": recordCount}, CreatedAt: s.clock()})
 }
 
 func (s *CapsuleService) PrepareReplayOverride(raw json.RawMessage) (json.RawMessage, error) {

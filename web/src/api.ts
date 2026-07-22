@@ -8,7 +8,9 @@ export type Job = components["schemas"]["Job"];
 export type JobSummary = components["schemas"]["JobSummary"];
 export type JobEvent = components["schemas"]["JobEvent"];
 export type CreateReplayRequest = components["schemas"]["CreateReplayRequest"];
+export type ReplayPreflight = components["schemas"]["ReplayPreflight"];
 export type Operation = components["schemas"]["operation"];
+export type TraceLog = components["schemas"]["log_record"];
 export type Boundary = components["schemas"]["boundary.schema"];
 export type Playback = components["schemas"]["playback.schema"];
 export type PlaybackPayload = Playback["payloads"][number];
@@ -16,7 +18,7 @@ type GeneratedCapsule = components["schemas"]["RunCapsule"];
 export type Capsule = Pick<GeneratedCapsule,
   "schema_version" | "capsule_id" | "source_capsule_id" | "trace_id" | "project_id" | "service_name" |
   "start_time" | "end_time" | "expires_at" | "terminal_status" | "integrity" | "completeness" |
-  "provenance" | "model_configuration" | "artifacts" | "operations" | "boundaries" | "privacy" |
+  "provenance" | "model_configuration" | "artifacts" | "operations" | "logs" | "boundaries" | "privacy" |
   "evaluations" | "replay_history" | "extensions"
 >;
 export type Observation = components["schemas"]["observation"];
@@ -124,6 +126,9 @@ export const api = {
   },
   createReplay(body: CreateReplayRequest): Promise<Job> {
     return request("/api/v1/replays", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  },
+  preflightReplay(body: CreateReplayRequest): Promise<ReplayPreflight> {
+    return request("/api/v1/replays/preflight", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
   },
   job(id: string): Promise<Job> { return request(`/api/v1/jobs/${encodeURIComponent(id)}`); },
   jobs(sourceCapsuleID?: string): Promise<JobSummary[]> {

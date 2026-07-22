@@ -8,7 +8,19 @@ import (
 	"github.com/krishnangopal1810/ai-flight-recorder/internal/types"
 )
 
-var ErrPayloadCorrupt = errors.New("stored payload digest mismatch")
+var (
+	ErrPayloadCorrupt  = errors.New("stored payload digest mismatch")
+	ErrTraceLogsSealed = errors.New("trace log staging is sealed")
+)
+
+type StagedLog struct {
+	ProjectID string            `json:"project_id"`
+	TraceID   string            `json:"trace_id"`
+	Record    types.LogRecord   `json:"record"`
+	Payloads  map[string][]byte `json:"payloads,omitempty"`
+	Policy    types.PolicyDelta `json:"policy,omitempty"`
+	ExpiresAt time.Time         `json:"expires_at"`
+}
 
 type Token struct {
 	ID        string
@@ -41,6 +53,11 @@ type Repository interface {
 	LoadPayload(context.Context, string) ([]byte, error)
 	PutQuarantine(context.Context, QuarantineRecord) error
 	DeleteExpired(context.Context, time.Time) (int, error)
+	StageLog(context.Context, StagedLog) error
+	SealLogs(context.Context, string, string, time.Time) ([]StagedLog, error)
+	ReleaseLogs(context.Context, string, string) error
+	CompleteLogs(context.Context, string, string) error
+	DeleteExpiredLogs(context.Context, time.Time) (int, error)
 
 	CreateToken(context.Context, Token) error
 	GetTokenByHash(context.Context, string) (Token, error)

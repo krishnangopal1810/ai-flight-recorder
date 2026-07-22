@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"sort"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/krishnangopal1810/ai-flight-recorder/internal/repository"
@@ -58,6 +59,9 @@ func playbackCompleteness(capsule types.RunCapsule, warnings []types.PlaybackWar
 	for _, warning := range warnings {
 		item := types.MissingItem{Code: warning.Code, Message: warning.Message}
 		report.Playback.Missing = append(report.Playback.Missing, item)
+		if logOnlyReferences(warning.References) {
+			continue
+		}
 		report.Diff.Missing = append(report.Diff.Missing, item)
 		report.Replay.Missing = append(report.Replay.Missing, item)
 		report.Bisect.Missing = append(report.Bisect.Missing, item)
@@ -67,6 +71,18 @@ func playbackCompleteness(capsule types.RunCapsule, warnings []types.PlaybackWar
 	report.Replay = failClosedForIssues(report.Replay, true)
 	report.Bisect = failClosedForIssues(report.Bisect, true)
 	return report
+}
+
+func logOnlyReferences(references []string) bool {
+	if len(references) == 0 {
+		return false
+	}
+	for _, reference := range references {
+		if !strings.HasPrefix(reference, "logs[") {
+			return false
+		}
+	}
+	return true
 }
 
 func playbackPayloadMetadata(digest string, references []payloadReference) types.PlaybackPayload {

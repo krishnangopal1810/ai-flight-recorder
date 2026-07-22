@@ -110,6 +110,51 @@ func TestAFRPLY001PlaybackKeepsVerifiedEvidenceInspectableWithDamagedPayloads(t 
 	}
 }
 
+func TestMissingLogPayloadDegradesPlaybackOnly(t *testing.T) {
+	ctx := context.Background()
+	directory := t.TempDir()
+	blobRoot := filepath.Join(directory, "blobs")
+	repo, err := repository.OpenLocal(ctx, filepath.Join(directory, "flight.db"), blobRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	body := []byte(`{"message":"supporting evidence"}`)
+	digest := DigestBytes(body)
+	ready := map[string]types.Completeness{
+		"playback": {State: types.CompletenessReady}, "diff": {State: types.CompletenessReady},
+		"replay": {State: types.CompletenessReady}, "bisect": {State: types.CompletenessReady},
+	}
+	capsule := types.RunCapsule{
+		SchemaVersion: types.SchemaVersion, TraceID: "log-playback", ProjectID: "logs", ServiceName: "agent",
+		StartTime: time.Unix(1, 0).UTC(), EndTime: time.Unix(2, 0).UTC(), TerminalStatus: "ok", Completeness: ready,
+		Logs: []types.LogRecord{{ID: "log-1", Timestamp: time.Unix(1, 0).UTC(), Body: &types.PayloadRef{Digest: digest, MediaType: "application/json", Size: int64(len(body)), State: types.PayloadStateCaptured}}},
+	}
+	if err := FinalizeCapsule(&capsule, map[string][]byte{digest: body}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.PutCapsule(ctx, capsule, map[string][]byte{digest: body}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(localBlobFilename(blobRoot, digest)); err != nil {
+		t.Fatal(err)
+	}
+	capsules := NewCapsuleService(repo, mustPolicy(t))
+	if _, err := capsules.Get(ctx, capsule.CapsuleID, true); err == nil {
+		t.Fatal("full bundle verification accepted a missing log payload")
+	}
+	if _, err := capsules.GetWithoutLogs(ctx, capsule.CapsuleID); err != nil {
+		t.Fatalf("replay-relevant verification was blocked by log evidence: %v", err)
+	}
+	playback, err := capsules.Playback(ctx, capsule.CapsuleID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if playback.Completeness.Playback.State != types.CompletenessIncomplete || playback.Completeness.Diff.State != types.CompletenessReady || playback.Completeness.Replay.State != types.CompletenessReady || playback.Completeness.Bisect.State != types.CompletenessReady {
+		t.Fatalf("log-only degradation leaked into replay modes: %#v", playback.Completeness)
+	}
+}
+
 func TestAFRPLY001PlaybackNeverExecutesEntrypointOrUsesOutboundTransport(t *testing.T) {
 	ctx := context.Background()
 	directory := t.TempDir()

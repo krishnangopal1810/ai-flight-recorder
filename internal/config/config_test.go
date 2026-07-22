@@ -20,6 +20,28 @@ func TestRuntimeEgressNetworkComesFromTheConfigurationBoundary(t *testing.T) {
 	}
 }
 
+func TestFlightFileValidatesReplaySetupAndNormalizesHosts(t *testing.T) {
+	file := FlightFile{Version: "1", ProjectID: "support-agent", Entrypoint: types.Entrypoint{
+		Command: []string{"python", "agent.py"}, InputMode: "stdin_json", OutputMode: "stdout_json",
+		Image: "sha256:" + strings.Repeat("a", 64), Environment: []string{"OPENAI_API_KEY"}, ModelHosts: []string{"API.OpenAI.COM."},
+	}}
+	if err := ValidateFlightFile(&file); err != nil {
+		t.Fatal(err)
+	}
+	if file.Entrypoint.ModelHosts[0] != "api.openai.com" {
+		t.Fatalf("normalized model host = %q", file.Entrypoint.ModelHosts[0])
+	}
+	file.Entrypoint.ModelHosts = []string{"https://api.openai.com/v1"}
+	if err := ValidateFlightFile(&file); err == nil {
+		t.Fatal("model URL was accepted as a hostname")
+	}
+	file.Entrypoint.ModelHosts = nil
+	file.Entrypoint.Image = "agent:latest"
+	if err := ValidateFlightFile(&file); err == nil {
+		t.Fatal("mutable image tag was accepted")
+	}
+}
+
 func TestRuntimeRejectsInvalidEgressNetworkName(t *testing.T) {
 	cfg := Default(t.TempDir())
 	cfg.Runtime.OCIEgressNetwork = "network with spaces"

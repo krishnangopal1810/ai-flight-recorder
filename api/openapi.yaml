@@ -5,6 +5,30 @@ info:
 servers:
   - url: http://127.0.0.1:7777/api/v1
 paths:
+  /v1/logs:
+    post:
+      operationId: exportOTLPLogs
+      summary: Export trace-correlated OTLP log records
+      description: Accepts standard OTLP Logs protobuf or JSON, optionally gzip encoded, using the ingest scope. Successful mixed batches report rejected records through OTLP partial success.
+      servers:
+        - url: http://127.0.0.1:7777
+      requestBody:
+        required: true
+        content:
+          application/x-protobuf:
+            schema: {type: string, format: binary}
+          application/protobuf:
+            schema: {type: string, format: binary}
+          application/json:
+            schema: {type: object, additionalProperties: true}
+      responses:
+        '200':
+          description: OTLP ExportLogsServiceResponse, including partial success when records were rejected
+          content:
+            application/x-protobuf:
+              schema: {type: string, format: binary}
+            application/json:
+              schema: {type: object, additionalProperties: true}
   /session:
     get:
       operationId: inspectSession
@@ -79,6 +103,12 @@ paths:
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/CreateReplayRequest'}}}}
       responses:
         '202': {description: Durable replay job, content: {application/json: {schema: {$ref: '#/components/schemas/Job'}}}}
+  /replays/preflight:
+    post:
+      operationId: preflightReplay
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/CreateReplayRequest'}}}}
+      responses:
+        '200': {description: Side-effect-free replay readiness result, content: {application/json: {schema: {$ref: '#/components/schemas/ReplayPreflight'}}}}
   /bisects:
     post:
       operationId: evaluateBisect
@@ -171,6 +201,7 @@ components:
       properties:
         schema_version: {type: string}
         service_version: {type: string}
+        release_version: {type: string}
         auth_mode: {enum: [token, local_bypass]}
         connected: {type: boolean}
         local_mode_available: {type: boolean}
@@ -184,7 +215,7 @@ components:
     Error: {$ref: '../schemas/error.schema.json'}
     CreateReplayRequest:
       type: object
-      required: [source_capsule_id, substitute_llm, allow_sandboxed_side_effects]
+      required: [source_capsule_id, allow_sandboxed_side_effects]
       properties:
         source_capsule_id: {type: string}
         model: {type: string}
@@ -193,7 +224,7 @@ components:
         candidate_commit: {type: string}
         candidate_dirty_digest: {type: string}
         candidate_source_digest: {type: string}
-        substitute_llm: {type: boolean}
+        substitute_llm: {type: boolean, default: true}
         allow_sandboxed_side_effects: {type: boolean}
         repetitions: {type: integer, minimum: 1, maximum: 50}
         pass_threshold: {type: number, minimum: 0, maximum: 1}
@@ -218,6 +249,34 @@ components:
         target: {enum: [request, response]}
         applied: {type: boolean}
         message: {type: string}
+      additionalProperties: false
+    ReplayPreflightIssue:
+      type: object
+      required: [code, message, remediation]
+      properties:
+        code: {type: string}
+        message: {type: string}
+        remediation: {type: string}
+        boundary_id: {type: string}
+      additionalProperties: false
+    ReplayPreflightEffective:
+      type: object
+      required: [substitutions, live_boundaries, allowed_hosts, environment_names]
+      properties:
+        candidate_image: {type: string}
+        substitutions: {type: array, items: {type: string}}
+        live_boundaries: {type: array, items: {type: string}}
+        allowed_hosts: {type: array, items: {type: string}}
+        environment_names: {type: array, items: {type: string}}
+        model: {type: string}
+      additionalProperties: false
+    ReplayPreflight:
+      type: object
+      required: [state, issues, effective]
+      properties:
+        state: {enum: [ready, blocked]}
+        issues: {type: array, items: {$ref: '#/components/schemas/ReplayPreflightIssue'}}
+        effective: {$ref: '#/components/schemas/ReplayPreflightEffective'}
       additionalProperties: false
     ReplayJobResult:
       type: object

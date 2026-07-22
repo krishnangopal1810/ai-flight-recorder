@@ -73,13 +73,16 @@ func (r *LocalRepository) migrate(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS audit_events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, safe_metadata BLOB NOT NULL, created_at TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS evaluators (capsule_id TEXT NOT NULL REFERENCES capsules(id) ON DELETE CASCADE, evaluator_id TEXT NOT NULL, version TEXT NOT NULL, definition BLOB NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(capsule_id,evaluator_id,version))`,
 		`CREATE TABLE IF NOT EXISTS evaluator_runs (id TEXT PRIMARY KEY, definition_id TEXT NOT NULL, definition_version TEXT NOT NULL, baseline_capsule_id TEXT NOT NULL REFERENCES capsules(id), candidate_capsule_id TEXT NOT NULL REFERENCES capsules(id), outcome TEXT NOT NULL, result BLOB NOT NULL, created_at TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS staged_trace_logs (project_id TEXT NOT NULL, trace_id TEXT NOT NULL, log_id TEXT NOT NULL, data BLOB NOT NULL, expires_at TEXT NOT NULL, PRIMARY KEY(project_id,trace_id,log_id))`,
+		`CREATE INDEX IF NOT EXISTS staged_trace_logs_expiry ON staged_trace_logs(expires_at)`,
+		`CREATE TABLE IF NOT EXISTS trace_log_seals (project_id TEXT NOT NULL, trace_id TEXT NOT NULL, expires_at TEXT NOT NULL, PRIMARY KEY(project_id,trace_id))`,
 	}
 	for _, statement := range statements {
 		if _, err := r.db.ExecContext(ctx, statement); err != nil {
 			return types.NewError(types.ErrStorage, "cannot migrate SQLite database", "back up the data directory and inspect the migration error", err)
 		}
 	}
-	if _, err := r.db.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(1,?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+	if _, err := r.db.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(2,?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 		return types.NewError(types.ErrStorage, "cannot record SQLite schema version", "restore a backup and inspect migration state", err)
 	}
 	return nil

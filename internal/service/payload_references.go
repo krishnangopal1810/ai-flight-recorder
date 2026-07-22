@@ -45,6 +45,10 @@ func capturedPayloadReferences(capsule types.RunCapsule) map[string][]payloadRef
 		add("operations["+strconv.Itoa(index)+"].input", capsule.Operations[index].Input)
 		add("operations["+strconv.Itoa(index)+"].output", capsule.Operations[index].Output)
 	}
+	for index := range capsule.Logs {
+		add("logs["+strconv.Itoa(index)+"].body", capsule.Logs[index].Body)
+		add("logs["+strconv.Itoa(index)+"].attributes", capsule.Logs[index].Attributes)
+	}
 	for index := range capsule.Artifacts {
 		add("artifacts["+strconv.Itoa(index)+"].payload", capsule.Artifacts[index].Payload)
 	}

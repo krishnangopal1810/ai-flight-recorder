@@ -39,7 +39,7 @@ export function App() {
       <div className="header-actions"><span className="connection-state"><i />Connected · {session.data.scopes.join(", ")}</span><button className="icon-button" onClick={toggleDensity} title={`Use ${density === "comfortable" ? "compact" : "comfortable"} density`} aria-label="Toggle display density">{density === "comfortable" ? "Compact" : "Comfortable"}</button><button className="icon-button" onClick={disconnect}>Disconnect</button></div>
     </header>
     <main id="main-content" tabIndex={-1}>
-      {route.kind === "record" && <RecordWorkspace scopes={session.data.scopes} navigate={navigate} />}
+      {route.kind === "record" && <RecordWorkspace scopes={session.data.scopes} releaseVersion={session.data.release_version} navigate={navigate} />}
       {(route.kind === "runs" || route.kind === "run") && <RunsExperience route={route} navigate={navigate} />}
       {(route.kind === "jobs" || route.kind === "job") && <JobsExperience route={route} navigate={navigate} />}
     </main>

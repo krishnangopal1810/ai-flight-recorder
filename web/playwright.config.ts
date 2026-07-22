@@ -9,6 +9,6 @@ const outputDir = process.env.FLIGHT_PLAYWRIGHT_OUTPUT_DIR ?? "../.artifacts/pla
 export default defineConfig({
   testDir: "./tests",
 	use: {baseURL: externalBaseURL ?? `http://127.0.0.1:${port}`, trace: "on", screenshot: "on", video: "on"},
-	webServer: externalBaseURL ? undefined : {command: `npm run dev -- --host 127.0.0.1 --port ${port}`, port, reuseExistingServer: true},
+	webServer: externalBaseURL ? undefined : {command: `npm run dev -- --host 127.0.0.1 --port ${port}`, port, reuseExistingServer: false},
   outputDir,
 });

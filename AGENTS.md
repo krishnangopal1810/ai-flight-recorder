@@ -12,7 +12,10 @@ This repository is designed for agent-first development. Start here, then open o
 - `make integration` — run storage and API integration tests.
 - `make e2e` — run deterministic product journeys.
 - `make security` — run privacy and replay-isolation checks.
+- `make secret-scan` — scan all publishable Git refs and the worktree for credentials without sending source to a third party.
+- `make license-check` — audit Go dependency licenses and the exact reviewed transitive exception.
 - `make docs-check` — validate the repository knowledge base.
+- `make demo-check` — validate the Docker-only public demo launcher contract.
 - `make quality` — generate the domain quality report.
 - `make verify` — run every blocking local check.
 - `make dev-up` / `make dev-down` — start or stop a worktree-isolated development stack.

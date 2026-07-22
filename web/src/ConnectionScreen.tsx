@@ -69,5 +69,5 @@ function friendlyMessage(error: Error): string {
 export function supportedService(version: string): boolean { return version.split(".")[0] === "1"; }
 
 export function BrandMark() {
-  return <span className="brand-mark" aria-hidden="true"><i /><i /><i /></span>;
+  return <span className="brand-mark" aria-hidden="true"><img src="/brand-mark.svg" alt="" /></span>;
 }

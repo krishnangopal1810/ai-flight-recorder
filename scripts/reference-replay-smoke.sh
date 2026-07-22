@@ -138,6 +138,8 @@ assert capsule["completeness"]["replay"]["state"] == "ready", capsule["completen
 assert capsule["provenance"]["entrypoint"]["image"] == sys.argv[2], capsule["provenance"]
 assert capsule["provenance"]["entrypoint"]["command"] == ["python", "/app/agent.py"]
 assert capsule["provenance"]["entrypoint"]["model_hosts"] == ["fake-deps"]
+assert capsule["provenance"]["entrypoint"]["environment"] == ["MODEL_TOKEN"]
+assert capsule["provenance"]["entrypoint"]["model_override"] is True
 expected = ["retriever.policy", "mcp.policy", "tool.eligibility", "api.policy", "llm.answer"]
 assert [boundary["logical_key"] for boundary in capsule["boundaries"]] == expected, capsule["boundaries"]
 assert [boundary["replay_policy"] for boundary in capsule["boundaries"]] == ["substitute", "substitute", "substitute", "substitute", "live"]
@@ -222,7 +224,7 @@ diff = json.load(open(sys.argv[1]))
 assert all(item["kind"] == "provenance_changed" for item in (diff.get("observations") or [])), diff
 PY
 
-create_replay "$source_id" "substitute-only" true "$artifact_root/all-substituted-job-created.json"
+create_replay "$source_id" "" true "$artifact_root/all-substituted-job-created.json"
 all_substituted_job_id=$(python3 - "$artifact_root/all-substituted-job-created.json" <<'PY'
 import json, sys
 print(json.load(open(sys.argv[1]))["id"])

@@ -108,5 +108,5 @@ var capsuleKnownFields = map[string]struct{}{
 	"project_id": {}, "service_name": {}, "start_time": {}, "end_time": {},
 	"expires_at": {}, "terminal_status": {}, "integrity": {}, "completeness": {}, "provenance": {},
 	"model_configuration": {}, "artifacts": {}, "operations": {}, "boundaries": {},
-	"privacy": {}, "evaluations": {}, "replay_history": {}, "extensions": {},
+	"logs": {}, "privacy": {}, "evaluations": {}, "replay_history": {}, "extensions": {},
 }

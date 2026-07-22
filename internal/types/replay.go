@@ -18,6 +18,35 @@ type CreateReplayRequest struct {
 	Overrides                 []ReplayOverride `json:"overrides,omitempty"`
 }
 
+type ReplayPreflightState string
+
+const (
+	ReplayPreflightReady   ReplayPreflightState = "ready"
+	ReplayPreflightBlocked ReplayPreflightState = "blocked"
+)
+
+type ReplayPreflightIssue struct {
+	Code        string `json:"code"`
+	Message     string `json:"message"`
+	Remediation string `json:"remediation"`
+	BoundaryID  string `json:"boundary_id,omitempty"`
+}
+
+type ReplayPreflightEffective struct {
+	CandidateImage   string   `json:"candidate_image,omitempty"`
+	Substitutions    []string `json:"substitutions"`
+	LiveBoundaries   []string `json:"live_boundaries"`
+	AllowedHosts     []string `json:"allowed_hosts"`
+	EnvironmentNames []string `json:"environment_names"`
+	Model            string   `json:"model,omitempty"`
+}
+
+type ReplayPreflight struct {
+	State     ReplayPreflightState     `json:"state"`
+	Issues    []ReplayPreflightIssue   `json:"issues"`
+	Effective ReplayPreflightEffective `json:"effective"`
+}
+
 type ReplayOverride struct {
 	BoundaryID string          `json:"boundary_id" yaml:"boundary_id"`
 	Target     string          `json:"target" yaml:"target"`

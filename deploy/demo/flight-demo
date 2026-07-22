@@ -1,0 +1,418 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+readonly demo_label="io.ai-flight-recorder.demo"
+readonly name_label="io.ai-flight-recorder.demo.name"
+readonly role_label="io.ai-flight-recorder.demo.role"
+readonly token_label="io.ai-flight-recorder.demo.token"
+
+action=""
+demo_name="flight-recorder"
+http_port="7777"
+json_output=false
+purge=false
+docker_bin="${AFR_DEMO_DOCKER_BIN:-docker}"
+use_local_images="${AFR_DEMO_USE_LOCAL_IMAGES:-false}"
+
+usage() {
+  cat <<'USAGE'
+AI Flight Recorder public alpha demo
+
+Usage:
+  flight-demo start [--name NAME] [--http-port PORT] [--json]
+  flight-demo status [--name NAME] [--json]
+  flight-demo stop [--name NAME] [--purge] [--json]
+
+Commands:
+  start          Capture the failed refund run, replay one change, and compare it
+  status         Print the running state and the last completed investigation
+  stop           Stop demo containers while retaining the recorded volumes
+  stop --purge   Remove only this demo's labelled containers, network, and volumes
+
+Options:
+  --name NAME       Isolate a named demo instance (default: flight-recorder)
+  --http-port PORT  Loopback inspector port (default: 7777)
+  --json            Emit the result as machine-readable JSON
+USAGE
+}
+
+fail() {
+  if $json_output; then
+    jq -n --arg error "$1" '{error:$error}' >&2
+  else
+    printf 'flight-demo: %s\n' "$1" >&2
+  fi
+  return 2
+}
+
+log() {
+  if $json_output; then
+    printf '%s\n' "$1" >&2
+  else
+    printf '%s\n' "$1"
+  fi
+}
+
+docker_cmd() {
+  "$docker_bin" "$@"
+}
+
+while (($#)); do
+  case "$1" in
+    start|status|stop)
+      [[ -z "$action" ]] || fail "choose exactly one of start, status, or stop"
+      action="$1"
+      shift
+      ;;
+    --name)
+      (($# >= 2)) || fail "--name requires a value"
+      demo_name="$2"
+      shift 2
+      ;;
+    --http-port)
+      (($# >= 2)) || fail "--http-port requires a value"
+      http_port="$2"
+      shift 2
+      ;;
+    --json)
+      json_output=true
+      shift
+      ;;
+    --purge)
+      purge=true
+      shift
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    *) fail "unknown argument: $1" ;;
+  esac
+done
+
+[[ -n "$action" ]] || { usage; exit 2; }
+[[ "$demo_name" =~ ^[a-z0-9][a-z0-9.-]{0,31}$ ]] || fail "--name must match [a-z0-9][a-z0-9.-]{0,31}"
+[[ "$http_port" =~ ^[0-9]+$ ]] || fail "--http-port must be an integer from 1024 to 65535"
+((10#$http_port >= 1024 && 10#$http_port <= 65535)) || fail "--http-port must be an integer from 1024 to 65535"
+[[ "$action" == "stop" || "$purge" == false ]] || fail "--purge is valid only with stop"
+[[ "$use_local_images" == "true" || "$use_local_images" == "false" ]] || fail "AFR_DEMO_USE_LOCAL_IMAGES must be true or false"
+
+readonly prefix="afr-demo-${demo_name}"
+readonly network_name="${prefix}-network"
+readonly postgres_name="${prefix}-postgres"
+readonly minio_name="${prefix}-minio"
+readonly fake_name="${prefix}-fake-deps"
+readonly flight_name="${prefix}-flight"
+readonly state_name="${prefix}-state"
+readonly postgres_volume="${prefix}-postgres"
+readonly objects_volume="${prefix}-objects"
+
+readonly demo_version="${AFR_DEMO_VERSION:-v0.1.0-alpha.1}"
+readonly repository="${AFR_DEMO_REPOSITORY:-ghcr.io/krishnangopal1810/ai-flight-recorder}"
+readonly service_image="${AFR_DEMO_SERVICE_IMAGE:-${repository}:${demo_version}}"
+readonly agent_image="${AFR_DEMO_AGENT_IMAGE:-${repository}-demo-agent:${demo_version}}"
+readonly postgres_image="${AFR_DEMO_POSTGRES_IMAGE:-postgres:17-alpine}"
+readonly minio_image="${AFR_DEMO_MINIO_IMAGE:-quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z}"
+readonly minio_client_image="${AFR_DEMO_MINIO_CLIENT_IMAGE:-quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z}"
+
+label_args=(--label "${demo_label}=true" --label "${name_label}=${demo_name}")
+filter_args=(--filter "label=${demo_label}=true" --filter "label=${name_label}=${demo_name}")
+
+state_value() {
+  local key="$1"
+  docker_cmd inspect --format "{{ index .Config.Labels \"${key}\" }}" "$state_name" 2>/dev/null || true
+}
+
+state_exists() {
+  docker_cmd inspect "$state_name" >/dev/null 2>&1
+}
+
+flight_running() {
+  [[ "$(docker_cmd inspect --format '{{.State.Running}}' "$flight_name" 2>/dev/null || true)" == "true" ]]
+}
+
+resource_is_owned() {
+  local kind="$1" resource="$2"
+  [[ "$(docker_cmd "$kind" inspect --format "{{ index .Labels \"${demo_label}\" }}:{{ index .Labels \"${name_label}\" }}" "$resource" 2>/dev/null || true)" == "true:${demo_name}" ]]
+}
+
+remove_owned_containers() {
+  local id
+  while IFS= read -r id; do
+    [[ -n "$id" ]] && docker_cmd rm --force "$id" >/dev/null
+  done < <(docker_cmd ps --all --quiet "${filter_args[@]}")
+}
+
+remove_running_containers_but_keep_state() {
+  local id role
+  while IFS= read -r id; do
+    [[ -n "$id" ]] || continue
+    role="$(docker_cmd inspect --format "{{ index .Config.Labels \"${role_label}\" }}" "$id")"
+    [[ "$role" == "state" ]] || docker_cmd rm --force "$id" >/dev/null
+  done < <(docker_cmd ps --all --quiet "${filter_args[@]}")
+}
+
+remove_owned_network() {
+  if resource_is_owned network "$network_name"; then
+    docker_cmd network rm "$network_name" >/dev/null
+  fi
+}
+
+remove_owned_volumes() {
+  local volume
+  while IFS= read -r volume; do
+    [[ -n "$volume" ]] && docker_cmd volume rm "$volume" >/dev/null
+  done < <(docker_cmd volume ls --quiet "${filter_args[@]}")
+}
+
+emit_result() {
+  local status="$1"
+  local inspector_url token source_id candidate_id job_id divergence recorded candidate running
+  inspector_url="$(state_value io.ai-flight-recorder.demo.inspector_url)"
+  token="$(state_value "$token_label")"
+  source_id="$(state_value io.ai-flight-recorder.demo.source_capsule_id)"
+  candidate_id="$(state_value io.ai-flight-recorder.demo.candidate_capsule_id)"
+  job_id="$(state_value io.ai-flight-recorder.demo.job_id)"
+  divergence="$(state_value io.ai-flight-recorder.demo.first_divergence)"
+  recorded="$(state_value io.ai-flight-recorder.demo.recorded_outcome)"
+  candidate="$(state_value io.ai-flight-recorder.demo.candidate_outcome)"
+  running=false
+  flight_running && running=true
+
+  if $json_output; then
+    jq -n \
+      --arg status "$status" \
+      --argjson running "$running" \
+      --arg inspector_url "$inspector_url" \
+      --arg token "$token" \
+      --arg source_capsule_id "$source_id" \
+      --arg candidate_capsule_id "$candidate_id" \
+      --arg job_id "$job_id" \
+      --arg first_divergence "$divergence" \
+      --arg recorded_outcome "$recorded" \
+      --arg candidate_outcome "$candidate" \
+      --arg cleanup_command "docker run --rm -v /var/run/docker.sock:/var/run/docker.sock ${repository}-demo:${demo_version} stop --name ${demo_name} --purge" \
+      '{status:$status,running:$running,inspector_url:$inspector_url,token:$token,source_capsule_id:$source_capsule_id,candidate_capsule_id:$candidate_capsule_id,job_id:$job_id,first_divergence:$first_divergence,recorded_outcome:$recorded_outcome,candidate_outcome:$candidate_outcome,cleanup_command:$cleanup_command}'
+    return
+  fi
+
+  if [[ "$status" == "ready" ]]; then
+    local recorded_label="$recorded"
+    if [[ "$recorded_label" == "deny" ]]; then
+      recorded_label="denied"
+    fi
+    printf '\n✓ Captured failed run        eligible refund %s\n' "$recorded_label"
+    printf '✓ Froze 2 dependencies       retriever, eligibility tool\n'
+    printf '✓ Replayed 1 change          model system instruction\n'
+    printf '✓ Found first divergence     %s\n' "$divergence"
+    printf '✓ Candidate completed        decision: %s\n\n' "$candidate"
+    printf 'Inspector:    %s\n' "$inspector_url"
+    printf 'Access token: %s\n' "$token"
+    printf 'Clean up:     docker run --rm -v /var/run/docker.sock:/var/run/docker.sock %s-demo:%s stop --name %s --purge\n' "$repository" "$demo_version" "$demo_name"
+  elif [[ "$status" == "stopped" && -n "$inspector_url" ]]; then
+    printf 'Demo %s is stopped. Its last investigation was %s → %s.\n' "$demo_name" "$recorded" "$candidate"
+  else
+    printf 'Demo %s is %s.\n' "$demo_name" "$status"
+  fi
+}
+
+docker_cmd version >/dev/null 2>&1 || fail "Docker is not reachable through /var/run/docker.sock"
+
+if [[ "$action" == "status" ]]; then
+  if state_exists; then
+    if flight_running; then emit_result ready; else emit_result stopped; fi
+  elif flight_running; then
+    emit_result starting
+  else
+    emit_result absent
+  fi
+  exit 0
+fi
+
+if [[ "$action" == "stop" ]]; then
+  if $purge; then
+    remove_owned_containers
+    remove_owned_network
+    remove_owned_volumes
+    if $json_output; then
+      jq -n --arg name "$demo_name" '{status:"purged",name:$name}'
+    else
+      printf 'Purged only resources labelled for demo %s.\n' "$demo_name"
+    fi
+  else
+    remove_running_containers_but_keep_state
+    remove_owned_network
+    if $json_output; then
+      jq -n --arg name "$demo_name" '{status:"stopped",name:$name,volumes_retained:true}'
+    else
+      printf 'Stopped demo %s. Recorded volumes and the last result are retained; add --purge to remove them.\n' "$demo_name"
+    fi
+  fi
+  exit 0
+fi
+
+if flight_running && state_exists; then
+  emit_result ready
+  exit 0
+fi
+
+previous_token="$(state_value "$token_label")"
+if [[ -z "$previous_token" ]] && resource_is_owned volume "$postgres_volume"; then
+  previous_token="$(docker_cmd volume inspect --format "{{ index .Labels \"${token_label}\" }}" "$postgres_volume")"
+fi
+token="$previous_token"
+if [[ -z "$token" ]]; then
+  token="frt_$(dd if=/dev/urandom bs=32 count=1 2>/dev/null | base64 | tr '+/' '-_' | tr -d '=\n')"
+fi
+[[ "$token" =~ ^frt_[A-Za-z0-9_-]{43}$ ]] || fail "retained development token is invalid; run stop --purge before retrying"
+
+remove_owned_containers
+remove_owned_network
+
+for resource in "$network_name" "$postgres_volume" "$objects_volume"; do
+  if docker_cmd network inspect "$resource" >/dev/null 2>&1 || docker_cmd volume inspect "$resource" >/dev/null 2>&1; then
+    if ! resource_is_owned network "$resource" && ! resource_is_owned volume "$resource"; then
+      fail "resource ${resource} exists without this demo's ownership labels"
+    fi
+  fi
+done
+
+log "Pulling versioned alpha inputs…"
+for image in "$service_image" "$agent_image" "$postgres_image" "$minio_image" "$minio_client_image"; do
+  if [[ "$use_local_images" == "true" ]] && docker_cmd image inspect "$image" >/dev/null 2>&1; then
+    continue
+  fi
+  docker_cmd image pull "$image" >/dev/null
+done
+
+if ! resource_is_owned volume "$postgres_volume"; then
+  docker_cmd volume create "${label_args[@]}" --label "${token_label}=${token}" --label "${role_label}=postgres" "$postgres_volume" >/dev/null
+fi
+if ! resource_is_owned volume "$objects_volume"; then
+  docker_cmd volume create "${label_args[@]}" --label "${token_label}=${token}" --label "${role_label}=objects" "$objects_volume" >/dev/null
+fi
+docker_cmd network create --internal "${label_args[@]}" "$network_name" >/dev/null
+
+completed=false
+on_error() {
+  local status=$?
+  if [[ "$completed" != true ]]; then
+    printf 'flight-demo: start failed; removing only this demo\x27s labelled containers and network (volumes retained)\n' >&2
+    remove_owned_containers || true
+    remove_owned_network || true
+  fi
+  exit "$status"
+}
+trap on_error ERR
+
+log "Starting the isolated evidence store…"
+docker_cmd run --detach --name "$postgres_name" "${label_args[@]}" --label "${role_label}=postgres" \
+  --network "$network_name" --network-alias postgres \
+  --env POSTGRES_DB=flight --env POSTGRES_USER=flight --env POSTGRES_PASSWORD=flight-demo-only \
+  --volume "${postgres_volume}:/var/lib/postgresql/data" "$postgres_image" >/dev/null
+for _ in $(seq 1 60); do
+  docker_cmd exec "$postgres_name" pg_isready -U flight -d flight >/dev/null 2>&1 && break
+  sleep 1
+done
+docker_cmd exec "$postgres_name" pg_isready -U flight -d flight >/dev/null
+
+docker_cmd run --detach --name "$minio_name" "${label_args[@]}" --label "${role_label}=objects" \
+  --network "$network_name" --network-alias minio \
+  --env MINIO_ROOT_USER=flight --env MINIO_ROOT_PASSWORD=flight-demo-only-password \
+  --volume "${objects_volume}:/data" "$minio_image" server /data >/dev/null
+docker_cmd run --rm "${label_args[@]}" --label "${role_label}=bucket-init" --network "$network_name" \
+  --entrypoint /bin/sh "$minio_client_image" -c \
+  'for attempt in $(seq 1 60); do mc alias set local http://minio:9000 flight flight-demo-only-password >/dev/null 2>&1 && exec mc mb --ignore-existing local/flight >/dev/null; sleep 1; done; exit 1'
+
+docker_cmd run --detach --name "$fake_name" "${label_args[@]}" --label "${role_label}=fake-deps" \
+  --network "$network_name" --network-alias fake-deps --entrypoint /flight-fake "$service_image" >/dev/null
+
+log "Starting Flight Recorder on loopback port ${http_port}…"
+docker_cmd run --detach --name "$flight_name" "${label_args[@]}" --label "${role_label}=flight" \
+  --user 0:0 --network "$network_name" --network-alias flight \
+  --publish "127.0.0.1:${http_port}:7777" \
+  --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
+  --env FLIGHT_HTTP_ADDRESS=0.0.0.0:7777 \
+  --env FLIGHT_OTLP_HTTP_ADDRESS=0.0.0.0:4318 \
+  --env FLIGHT_OTLP_GRPC_ADDRESS=0.0.0.0:4317 \
+  --env FLIGHT_WEB_DIR=/web \
+  --env FLIGHT_LATE_SPAN_GRACE=500ms \
+  --env FLIGHT_DATABASE_URL=postgres://flight:flight-demo-only@postgres:5432/flight?sslmode=disable \
+  --env FLIGHT_S3_ENDPOINT=http://minio:9000 \
+  --env FLIGHT_S3_BUCKET=flight \
+  --env FLIGHT_S3_ACCESS_KEY=flight \
+  --env FLIGHT_S3_SECRET_KEY=flight-demo-only-password \
+  --env FLIGHT_LOCAL_BYPASS=false \
+  --env FLIGHT_INSECURE_DEVELOPMENT=true \
+  --env "FLIGHT_BOOTSTRAP_TOKEN=${token}" \
+  --env "FLIGHT_GATEWAY_IMAGE=${service_image}" \
+  --env "FLIGHT_OCI_EGRESS_NETWORK=${network_name}" \
+  "$service_image" >/dev/null
+
+flight_cli() {
+  docker_cmd exec "$flight_name" /flight --url http://127.0.0.1:7777 --token "$token" --json "$@"
+}
+
+for _ in $(seq 1 90); do
+  flight_cli capsule list --limit 1 >/dev/null 2>&1 && break
+  if [[ "$(docker_cmd inspect --format '{{.State.Running}}' "$flight_name")" != "true" ]]; then
+    docker_cmd logs "$flight_name" >&2
+    fail "Flight Recorder exited before becoming ready"
+  fi
+  sleep 1
+done
+flight_cli capsule list --limit 1 >/dev/null
+
+log "Recording the real failed refund run through OTLP…"
+before_json="$(flight_cli capsule list --project refund-operations --limit 500)"
+before_ids="$(jq -c '[.[].capsule_id]' <<<"$before_json")"
+image_id="$(docker_cmd image inspect --format '{{.Id}}' "$agent_image")"
+printf '%s' '{"request_id":"refund-1842","days_since_purchase":12,"amount_usd":79}' | \
+  docker_cmd run --rm --interactive "${label_args[@]}" --label "${role_label}=source-agent" \
+    --network "$network_name" \
+    --env OTEL_EXPORTER_OTLP_ENDPOINT=http://flight:4318 \
+    --env "FLIGHT_OTLP_TOKEN=${token}" \
+    --env "FLIGHT_REPLAY_IMAGE=${image_id}" \
+    "$agent_image" >/tmp/flight-demo-source.json
+
+source_id=""
+for _ in $(seq 1 30); do
+  after_json="$(flight_cli capsule list --project refund-operations --limit 500)"
+  source_id="$(jq -r --argjson before "$before_ids" '[.[] | select(.service_name == "refund-review-agent" and .terminal_status == "error" and (.capsule_id as $id | ($before | index($id) | not)))] | if length == 1 then .[0].capsule_id else empty end' <<<"$after_json")"
+  [[ -n "$source_id" ]] && break
+  sleep 1
+done
+[[ -n "$source_id" ]] || fail "the failed source capsule did not finalize within 30 seconds"
+
+log "Freezing retrieval and tool responses; replaying one model-input change…"
+job_json="$(timeout 210 "$docker_bin" exec "$flight_name" /flight --url http://127.0.0.1:7777 --token "$token" --json replay "$source_id" --model policy-grounded)"
+[[ "$(jq -r '.state' <<<"$job_json")" == "completed" ]] || fail "controlled replay did not complete"
+[[ "$(jq -r '.result.substitutions | sort | join(",")' <<<"$job_json")" == "retriever.refund-policy,tool.refund-eligibility" ]] || fail "controlled replay did not freeze exactly the recorded retriever and tool"
+job_id="$(jq -r '.id' <<<"$job_json")"
+candidate_id="$(jq -r '.result.candidate_capsule_id' <<<"$job_json")"
+[[ -n "$candidate_id" && "$candidate_id" != null ]] || fail "controlled replay returned no candidate capsule"
+
+diff_json="$(flight_cli diff "$source_id" "$candidate_id")"
+[[ "$(jq -r '.first_divergence_known' <<<"$diff_json")" == "true" ]] || fail "the first divergence was not known"
+first_operation="$(jq -r '.first_divergence.operation_name' <<<"$diff_json")"
+first_field="$(jq -r '.first_divergence.field' <<<"$diff_json")"
+[[ "$first_operation" == "refund-decision" && "$first_field" == "input_digest" ]] || fail "the real run diverged somewhere other than the model request"
+recorded_outcome="$(jq -r '[.observations[] | select(.operation_name == "review-refund-request" and .field == "output_digest")][0].before_value.decision' <<<"$diff_json")"
+candidate_outcome="$(jq -r '[.observations[] | select(.operation_name == "review-refund-request" and .field == "output_digest")][0].after_value.decision' <<<"$diff_json")"
+[[ "$recorded_outcome" == "deny" && "$candidate_outcome" == "approve" ]] || fail "the verified outcomes were not deny → approve"
+
+inspector_url="http://127.0.0.1:${http_port}/runs/${source_id}/compare/${candidate_id}"
+docker_cmd create --name "$state_name" "${label_args[@]}" --label "${role_label}=state" \
+  --label "${token_label}=${token}" \
+  --label "io.ai-flight-recorder.demo.inspector_url=${inspector_url}" \
+  --label "io.ai-flight-recorder.demo.source_capsule_id=${source_id}" \
+  --label "io.ai-flight-recorder.demo.candidate_capsule_id=${candidate_id}" \
+  --label "io.ai-flight-recorder.demo.job_id=${job_id}" \
+  --label "io.ai-flight-recorder.demo.first_divergence=refund-decision → model request" \
+  --label "io.ai-flight-recorder.demo.recorded_outcome=${recorded_outcome}" \
+  --label "io.ai-flight-recorder.demo.candidate_outcome=${candidate_outcome}" \
+  --entrypoint /bin/true "$service_image" >/dev/null
+
+completed=true
+trap - ERR
+emit_result ready

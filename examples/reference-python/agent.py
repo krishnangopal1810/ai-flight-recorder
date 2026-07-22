@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 from typing import Any
 from urllib.request import Request, urlopen
 
 import rfc8785
-from flight_recorder import BoundaryError, boundary, register_entrypoint, set_run_provenance
+from flight_recorder import (
+    BoundaryError,
+    boundary,
+    install_otlp_logging,
+    register_entrypoint,
+    set_run_provenance,
+)
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.resources import Resource
@@ -40,30 +47,39 @@ def canonical(value: Any) -> str:
     return rfc8785.dumps(value).decode("utf-8")
 
 
-def configure_tracing() -> TracerProvider:
+def configure_tracing() -> tuple[TracerProvider, Resource]:
     endpoint = os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"].rstrip("/") + "/v1/traces"
     token = os.environ.get("FLIGHT_OTLP_TOKEN")
     headers = {"Authorization": f"Bearer {token}"} if token else None
-    provider = TracerProvider(
-        resource=Resource.create(
-            {
-                "service.name": SERVICE_NAME,
-                "flight.project.id": PROJECT_ID,
-                "flight.capture": True,
-                "flight.sdk.language": "python",
-            }
-        )
+    resource = Resource.create(
+        {
+            "service.name": SERVICE_NAME,
+            "flight.project.id": PROJECT_ID,
+            "flight.capture": True,
+            "flight.sdk.language": "python",
+        }
     )
+    provider = TracerProvider(resource=resource)
     provider.add_span_processor(
         BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint, headers=headers, timeout=5))
     )
     trace.set_tracer_provider(provider)
-    return provider
+    return provider, resource
 
 
 def main() -> int:
     root_input = json.load(sys.stdin)
-    provider = configure_tracing()
+    provider, resource = configure_tracing()
+    application_logger = logging.getLogger("ai-flight-recorder.reference-python")
+    application_logger.setLevel(logging.INFO)
+    log_runtime = install_otlp_logging(
+        application_logger,
+        resource=resource,
+        endpoint=os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"],
+        headers={"Authorization": f"Bearer {os.environ['FLIGHT_OTLP_TOKEN']}"}
+        if os.environ.get("FLIGHT_OTLP_TOKEN")
+        else None,
+    )
     tracer = trace.get_tracer("ai-flight-recorder.reference-python", "1.0")
     exit_code = 0
     callback_invoked = False
@@ -71,16 +87,21 @@ def main() -> int:
     retrieval_callback_invoked = False
     mcp_callback_invoked = False
     tool_callback_invoked = False
+    effective_model = os.environ.get("FLIGHT_REPLAY_MODEL", "flight-fake-v1")
 
     with tracer.start_as_current_span("answer-policy") as root:
+        application_logger.info("answer policy started", extra={"policy_id": root_input["policy_id"]})
         root.set_attribute("openinference.span.kind", "AGENT")
         root.set_attribute("flight.logical_key", "agent.answer")
         root.set_attribute("input.value", canonical(root_input))
+        root.set_attribute("gen_ai.request.model", effective_model)
         set_run_provenance(project_id=PROJECT_ID, commit_sha="a" * 40)
         register_entrypoint(
             ENTRYPOINT,
             image=os.environ.get("FLIGHT_REFERENCE_IMAGE"),
+            environment=["MODEL_TOKEN"],
             model_hosts=[MODEL_HOST],
+            model_override=True,
             input_mode="stdin_json",
             output_mode="stdout_json",
         )
@@ -152,6 +173,9 @@ def main() -> int:
 
             with tracer.start_as_current_span("eligibility-tool") as tool_span:
                 tool_span.set_attribute("openinference.span.kind", "TOOL")
+                application_logger.warning(
+                    "checking refund eligibility", extra={"days_since_purchase": 12}
+                )
                 tool_result = boundary(
                     "tool.eligibility",
                     tool_request,
@@ -164,6 +188,9 @@ def main() -> int:
 
             with tracer.start_as_current_span("policy-lookup") as policy_span:
                 policy_span.set_attribute("openinference.span.kind", "TOOL")
+                application_logger.error(
+                    "reference conformance error record", extra={"expected": True}
+                )
                 policy = boundary(
                     "api.policy",
                     request,
@@ -175,18 +202,15 @@ def main() -> int:
                 )
 
             model_request = {
-                "model": "flight-fake-v1",
+                "model": effective_model,
                 "messages": [{"role": "user", "content": root_input["policy_id"]}],
             }
 
             def model_dependency() -> dict[str, Any]:
                 nonlocal model_callback_invoked
                 model_callback_invoked = True
-                endpoint = MODEL_ENDPOINT
-                if os.environ.get("FLIGHT_REPLAY_MODEL") == "substitute-only":
-                    endpoint = "http://unavailable.invalid/v1/chat/completions"
                 request = Request(
-                    endpoint,
+                    MODEL_ENDPOINT,
                     data=canonical(model_request).encode("utf-8"),
                     headers={"Content-Type": "application/json"},
                     method="POST",
@@ -196,6 +220,7 @@ def main() -> int:
 
             with tracer.start_as_current_span("model-call") as model_span:
                 model_span.set_attribute("openinference.span.kind", "LLM")
+                model_span.set_attribute("gen_ai.request.model", effective_model)
                 model_span.set_attribute("gen_ai.tool.definitions", canonical(TOOL_DEFINITIONS))
                 model_response = boundary(
                     "llm.answer",
@@ -226,6 +251,7 @@ def main() -> int:
             root.set_attribute("output.value", canonical(result))
             print(canonical(result))
         except BoundaryError as error:
+            application_logger.error("boundary replay failed", extra={"error_type": type(error).__name__})
             result = {
                 "error": str(error),
                 "live_callback_invoked": callback_invoked,
@@ -245,8 +271,11 @@ def main() -> int:
             print(canonical(result))
             exit_code = 17
 
-    if not provider.force_flush(timeout_millis=5_000):
+    if not log_runtime.force_flush(timeout_millis=5_000):
         return 18
+    log_runtime.shutdown()
+    if not provider.force_flush(timeout_millis=5_000):
+        return 19
     provider.shutdown()
     return exit_code
 

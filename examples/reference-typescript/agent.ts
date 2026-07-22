@@ -1,9 +1,11 @@
 import { SpanStatusCode, trace } from "@opentelemetry/api";
+import { SeverityNumber } from "@opentelemetry/api-logs";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { detectResources, envDetector, resourceFromAttributes } from "@opentelemetry/resources";
 import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
 import { boundary, registerEntrypoint, setRunProvenance } from "@ai-flight-recorder/sdk";
+import { createOTLPLogging } from "@ai-flight-recorder/sdk/logging";
 import canonicalize from "canonicalize";
 
 const NORMAL_PROJECT_ID = "reference-replay-typescript";
@@ -31,23 +33,24 @@ function canonical(value: unknown): string {
   return encoded;
 }
 
-function configureTracing(projectId: string): NodeTracerProvider {
+function configureTracing(projectId: string) {
   const endpoint = `${requiredEnv("OTEL_EXPORTER_OTLP_ENDPOINT").replace(/\/$/, "")}/v1/traces`;
   const token = process.env.FLIGHT_OTLP_TOKEN;
-  const provider = new NodeTracerProvider({
-    resource: detectResources({ detectors: [envDetector] }).merge(resourceFromAttributes({
+  const resource = detectResources({ detectors: [envDetector] }).merge(resourceFromAttributes({
       "service.name": SERVICE_NAME,
       "flight.project.id": projectId,
       "flight.capture": true,
       "flight.sdk.language": "typescript",
-    })),
+    }));
+  const provider = new NodeTracerProvider({
+    resource,
     spanProcessors: [new BatchSpanProcessor(new OTLPTraceExporter({
       url: endpoint,
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     }))],
   });
   provider.register();
-  return provider;
+  return {provider, resource};
 }
 
 async function readInput(): Promise<AgentInput> {
@@ -65,7 +68,14 @@ function requiredEnv(name: string): string {
 async function run(): Promise<number> {
   const input = await readInput();
   const diagnosticFixture = process.env.FLIGHT_METADATA_FAILURE_FIXTURE === "1";
-  const provider = configureTracing(diagnosticFixture ? DIAGNOSTIC_PROJECT_ID : NORMAL_PROJECT_ID);
+  const {provider, resource} = configureTracing(diagnosticFixture ? DIAGNOSTIC_PROJECT_ID : NORMAL_PROJECT_ID);
+  const logging = createOTLPLogging({
+    resource,
+    endpoint: requiredEnv("OTEL_EXPORTER_OTLP_ENDPOINT"),
+    headers: process.env.FLIGHT_OTLP_TOKEN ? {Authorization: `Bearer ${process.env.FLIGHT_OTLP_TOKEN}`} : {},
+    scopeName: "ai-flight-recorder.reference-typescript",
+    scopeVersion: "1.0",
+  });
   const tracer = trace.getTracer("ai-flight-recorder.reference-typescript", "1.0");
   let callbackInvoked = false;
   let modelCallbackInvoked = false;
@@ -75,6 +85,7 @@ async function run(): Promise<number> {
   let exitCode = 0;
 
   await tracer.startActiveSpan("answer-policy", async root => {
+    logging.logger.emit({severityNumber: SeverityNumber.INFO, severityText: "INFO", body: "answer policy started", attributes: {policy_id: input.policy_id}});
     root.setAttribute("openinference.span.kind", "AGENT");
     root.setAttribute("flight.logical_key", "agent.answer");
     root.setAttribute("input.value", canonical(input));
@@ -121,6 +132,7 @@ async function run(): Promise<number> {
 
       const toolResult = await tracer.startActiveSpan("eligibility-tool", async span => {
         span.setAttribute("openinference.span.kind", "TOOL");
+        logging.logger.emit({severityNumber: SeverityNumber.WARN, severityText: "WARN", body: "checking refund eligibility", attributes: {days_since_purchase: 12}});
         try {
           return await boundary<ToolResponse>({days_since_purchase: 12, limit_days: 30}, async () => {
             toolCallbackInvoked = true;
@@ -132,6 +144,7 @@ async function run(): Promise<number> {
 
       const policy = await tracer.startActiveSpan("policy-lookup", async span => {
         span.setAttribute("openinference.span.kind", "TOOL");
+        logging.logger.emit({severityNumber: SeverityNumber.ERROR, severityText: "ERROR", body: "reference conformance error record", attributes: {expected: true}});
         try {
           return await boundary<PolicyResponse>(policyRequest, async () => {
             callbackInvoked = true;
@@ -195,6 +208,7 @@ async function run(): Promise<number> {
       root.setAttribute("output.value", canonical(result));
       process.stdout.write(`${canonical(result)}\n`);
     } catch (error) {
+      logging.logger.emit({severityNumber: SeverityNumber.ERROR, severityText: "ERROR", body: "boundary replay failed", attributes: {error_type: error instanceof Error ? error.name : "unknown"}});
       const result = {
         error: error instanceof Error ? error.message : "unknown boundary error",
         live_callback_invoked: callbackInvoked,
@@ -213,6 +227,8 @@ async function run(): Promise<number> {
     }
   });
 
+  await logging.forceFlush();
+  await logging.shutdown();
   await provider.forceFlush();
   await provider.shutdown();
   return exitCode;

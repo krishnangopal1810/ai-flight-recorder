@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/gowebpki/jcs"
 	"github.com/krishnangopal1810/ai-flight-recorder/internal/types"
@@ -96,10 +97,28 @@ func VerifyCapsuleManifest(capsule types.RunCapsule) error {
 }
 
 func VerifyCapsule(capsule types.RunCapsule, loadPayload func(string) ([]byte, error)) error {
+	return verifyCapsulePayloads(capsule, loadPayload, func(string) bool { return true })
+}
+
+func VerifyCapsuleWithoutLogs(capsule types.RunCapsule, loadPayload func(string) ([]byte, error)) error {
+	return verifyCapsulePayloads(capsule, loadPayload, func(path string) bool { return !strings.HasPrefix(path, "logs[") })
+}
+
+func verifyCapsulePayloads(capsule types.RunCapsule, loadPayload func(string) ([]byte, error), include func(string) bool) error {
 	if err := VerifyCapsuleManifest(capsule); err != nil {
 		return err
 	}
-	for _, digest := range capsule.Integrity.PayloadDigests {
+	for digest, references := range capturedPayloadReferences(capsule) {
+		included := false
+		for _, reference := range references {
+			if include(reference.path) {
+				included = true
+				break
+			}
+		}
+		if !included {
+			continue
+		}
 		data, err := loadPayload(digest)
 		if err != nil {
 			return types.NewError(types.ErrIncompleteCapsule, "capsule payload is unavailable", "restore the referenced payload or use playback with incomplete evidence", err)

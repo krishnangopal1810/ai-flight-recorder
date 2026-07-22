@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-const SchemaVersion = "1.0"
+const SchemaVersion = "1.1"
 
 const (
 	PayloadStateCaptured = "captured"
@@ -88,6 +88,7 @@ type Entrypoint struct {
 	Timeout       time.Duration     `json:"timeout" yaml:"timeout"`
 	Environment   []string          `json:"environment,omitempty" yaml:"environment,omitempty"`
 	ModelHosts    []string          `json:"model_hosts,omitempty" yaml:"model_hosts,omitempty"`
+	ModelOverride bool              `json:"model_override,omitempty" yaml:"model_override,omitempty"`
 	Sandboxes     map[string]string `json:"sandboxes,omitempty" yaml:"sandboxes,omitempty"`
 	CPULimit      float64           `json:"cpu_limit,omitempty" yaml:"cpu_limit,omitempty"`
 	MemoryLimitMB int64             `json:"memory_limit_mb,omitempty" yaml:"memory_limit_mb,omitempty"`
@@ -137,6 +138,23 @@ type Operation struct {
 	Sequence                  int               `json:"sequence"`
 }
 
+type LogRecord struct {
+	ID                     string      `json:"id"`
+	SpanID                 string      `json:"span_id,omitempty"`
+	ServiceName            string      `json:"service_name,omitempty"`
+	Timestamp              time.Time   `json:"timestamp"`
+	ObservedTimestamp      *time.Time  `json:"observed_timestamp,omitempty"`
+	SeverityNumber         int32       `json:"severity_number"`
+	SeverityText           string      `json:"severity_text,omitempty"`
+	EventName              string      `json:"event_name,omitempty"`
+	Body                   *PayloadRef `json:"body,omitempty"`
+	Attributes             *PayloadRef `json:"attributes,omitempty"`
+	DroppedAttributesCount uint32      `json:"dropped_attributes_count,omitempty"`
+	ScopeName              string      `json:"scope_name,omitempty"`
+	ScopeVersion           string      `json:"scope_version,omitempty"`
+	ScopeSchemaURL         string      `json:"scope_schema_url,omitempty"`
+}
+
 type Boundary struct {
 	ID               string       `json:"id"`
 	OperationSpanID  string       `json:"operation_span_id"`
@@ -165,6 +183,12 @@ type PrivacySummary struct {
 	Exclusions    map[string]int `json:"exclusions,omitempty"`
 	Truncations   map[string]int `json:"truncations,omitempty"`
 	ExportPolicy  string         `json:"export_policy,omitempty"`
+}
+
+type PolicyDelta struct {
+	Redactions  map[string]int `json:"redactions,omitempty"`
+	Exclusions  map[string]int `json:"exclusions,omitempty"`
+	Truncations map[string]int `json:"truncations,omitempty"`
 }
 
 type Evaluation struct {
@@ -203,6 +227,7 @@ type RunCapsule struct {
 	Model           ModelConfiguration         `json:"model_configuration,omitempty"`
 	Artifacts       []Artifact                 `json:"artifacts,omitempty"`
 	Operations      []Operation                `json:"operations"`
+	Logs            []LogRecord                `json:"logs,omitempty"`
 	Boundaries      []Boundary                 `json:"boundaries,omitempty"`
 	Privacy         PrivacySummary             `json:"privacy"`
 	Evaluations     []Evaluation               `json:"evaluations,omitempty"`
@@ -233,6 +258,7 @@ type CapsuleSummary struct {
 type SessionInfo struct {
 	SchemaVersion      string   `json:"schema_version"`
 	ServiceVersion     string   `json:"service_version"`
+	ReleaseVersion     string   `json:"release_version,omitempty"`
 	AuthMode           string   `json:"auth_mode"`
 	Connected          bool     `json:"connected"`
 	LocalModeAvailable bool     `json:"local_mode_available"`

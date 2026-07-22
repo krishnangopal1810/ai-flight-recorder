@@ -51,7 +51,7 @@ func newRoot(options *rootOptions) *cobra.Command {
 	command.PersistentFlags().StringVar(&options.config, "config", "", "service configuration YAML")
 	command.PersistentFlags().BoolVar(&options.json, "json", false, "emit machine-readable JSON")
 	command.AddCommand(
-		newServe(options), newInit(), newRecord(options), newCapsule(options), newPlayback(options), newReplay(options), newDiff(options), newToken(options), newEvaluator(options), newSchema(), newHelpMarkdown(command),
+		newServe(options), newInit(), newRecord(options), newVersion(options), newCapsule(options), newPlayback(options), newReplay(options), newDiff(options), newToken(options), newEvaluator(options), newSchema(), newHelpMarkdown(command),
 		newBisect(options), newDemo(options),
 	)
 	return command
@@ -72,88 +72,6 @@ func newServe(options *rootOptions) *cobra.Command {
 		defer application.Close()
 		return application.Serve(ctx)
 	}}
-}
-
-func newInit() *cobra.Command {
-	var force bool
-	command := &cobra.Command{Use: "init", Short: "Create a safe replay application definition", RunE: func(_ *cobra.Command, _ []string) error {
-		filename := "flight.yaml"
-		if !force {
-			if _, err := os.Stat(filename); err == nil {
-				return types.NewError(types.ErrConflict, "flight.yaml already exists", "use --force to replace it", nil)
-			}
-		}
-		content := "version: \"1\"\nentrypoint:\n  command: [\"python\", \"app.py\"]\n  working_dir: /workspace\n  dockerfile: Dockerfile\n  context: .\n  input_mode: stdin_json\n  output_mode: stdout_json\n  timeout: 2m\n  cpu_limit: 1\n  memory_limit_mb: 512\n  environment: []\n  model_hosts: []\n  sandboxes: {}\n"
-		return os.WriteFile(filename, []byte(content), 0o600)
-	}}
-	command.Flags().BoolVar(&force, "force", false, "replace an existing flight.yaml")
-	return command
-}
-
-func newRecord(options *rootOptions) *cobra.Command {
-	command := &cobra.Command{Use: "record -- <application command>", Short: "Run an application with Flight capture enabled", Args: cobra.MinimumNArgs(1), DisableFlagParsing: true}
-	command.RunE = func(_ *cobra.Command, args []string) error {
-		if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
-			return command.Help()
-		}
-		if len(args) > 0 && args[0] == "--" {
-			args = args[1:]
-		}
-		if len(args) == 0 {
-			return types.NewError(types.ErrValidation, "record command is missing an application", "pass an argv command after flight record --", nil)
-		}
-		if len(args) == 0 {
-			return types.NewError(types.ErrValidation, "application command is required", "use flight record -- <command>", nil)
-		}
-		child := exec.Command(args[0], args[1:]...)
-		child.Stdin, child.Stdout, child.Stderr = os.Stdin, os.Stdout, os.Stderr
-		child.Env = recordEnvironment(os.Environ(), options.url, options.token)
-		if err := child.Run(); err != nil {
-			var exit *exec.ExitError
-			if errors.As(err, &exit) {
-				return types.NewError(types.ErrBuild, "recorded application exited unsuccessfully", fmt.Sprintf("application exit code: %d", exit.ExitCode()), err)
-			}
-			return err
-		}
-		return nil
-	}
-	return command
-}
-
-func recordEnvironment(base []string, endpoint, token string) []string {
-	replaced := map[string]bool{"FLIGHT_CAPTURE": true, "OTEL_EXPORTER_OTLP_ENDPOINT": true}
-	if token != "" {
-		replaced["FLIGHT_OTLP_TOKEN"] = true
-		replaced["OTEL_EXPORTER_OTLP_HEADERS"] = true
-	}
-	environment := make([]string, 0, len(base)+4)
-	existingHeaders := ""
-	for _, entry := range base {
-		name, value, found := strings.Cut(entry, "=")
-		if token != "" && name == "OTEL_EXPORTER_OTLP_HEADERS" {
-			existingHeaders = value
-		}
-		if !found || !replaced[name] {
-			environment = append(environment, entry)
-		}
-	}
-	environment = append(environment, "FLIGHT_CAPTURE=true", "OTEL_EXPORTER_OTLP_ENDPOINT="+endpoint)
-	if token != "" {
-		environment = append(environment, "FLIGHT_OTLP_TOKEN="+token, "OTEL_EXPORTER_OTLP_HEADERS="+mergeOTLPAuthorization(existingHeaders, token))
-	}
-	return environment
-}
-
-func mergeOTLPAuthorization(headers, token string) string {
-	kept := make([]string, 0)
-	for _, header := range strings.Split(headers, ",") {
-		name, _, found := strings.Cut(strings.TrimSpace(header), "=")
-		if found && !strings.EqualFold(strings.TrimSpace(name), "authorization") {
-			kept = append(kept, strings.TrimSpace(header))
-		}
-	}
-	kept = append(kept, "authorization=Bearer%20"+token)
-	return strings.Join(kept, ",")
 }
 
 func newCapsule(options *rootOptions) *cobra.Command {
@@ -235,7 +153,7 @@ func newPlayback(options *rootOptions) *cobra.Command {
 }
 
 func newReplay(options *rootOptions) *cobra.Command {
-	var request types.CreateReplayRequest
+	request := types.CreateReplayRequest{SubstituteLLM: true}
 	command := &cobra.Command{Use: "replay <capsule-id>", Args: cobra.ExactArgs(1), Short: "Run an application under a recorded replay plan", RunE: func(_ *cobra.Command, args []string) error {
 		request.SourceCapsuleID = args[0]
 		if _, statErr := os.Stat("flight.yaml"); statErr == nil || request.Revision != "" {
@@ -269,7 +187,7 @@ func newReplay(options *rootOptions) *cobra.Command {
 	}}
 	command.Flags().StringVar(&request.Revision, "revision", "", "candidate Git revision")
 	command.Flags().StringVar(&request.Model, "model", "", "candidate model name exposed as FLIGHT_REPLAY_MODEL")
-	command.Flags().BoolVar(&request.SubstituteLLM, "substitute-llm", false, "substitute recorded model responses")
+	command.Flags().BoolVar(&request.SubstituteLLM, "substitute-llm", true, "substitute recorded model responses")
 	command.Flags().BoolVar(&request.AllowSandboxedSideEffects, "allow-sandboxed-side-effects", false, "allow declared mutating boundaries only inside their sandbox")
 	command.Flags().IntVar(&request.Repetitions, "repetitions", 1, "number of replay trials")
 	command.Flags().Float64Var(&request.PassThreshold, "pass-threshold", 1, "required evaluator pass ratio")

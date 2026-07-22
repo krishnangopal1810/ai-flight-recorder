@@ -65,6 +65,9 @@ services:
       FLIGHT_BOOTSTRAP_TOKEN: frt_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
       FLIGHT_GATEWAY_IMAGE: "${COMPOSE_PROJECT_NAME}-flight:latest"
       FLIGHT_OCI_EGRESS_NETWORK: "${COMPOSE_PROJECT_NAME}_default"
+      # The investigation demo declares this name for its controlled fake-model
+      # boundary. The value remains worker-local and is never stored in a capsule.
+      FLIGHT_REPLAY_CREDENTIAL_MODEL_TOKEN: flight-demo-model-token
     # The coordinator requires the engine socket; replayed application
     # containers never receive this mount and always run non-root/capability-free.
     user: "0:0"

@@ -58,7 +58,7 @@ import json, sys
 api, cli, playback, replay_error = (json.load(open(path)) for path in sys.argv[1:5])
 capsule_id, replay_status = sys.argv[5:7]
 assert api == cli, (api, cli)
-assert api["schema_version"] == "1.0" and api["capsule_id"] == capsule_id, api
+assert api["schema_version"] == "1.1" and api["capsule_id"] == capsule_id, api
 assert api["playback"] == {"state": "ready"}, api["playback"]
 assert api["diff"] == {"state": "ready"}, api["diff"]
 for mode in ("replay", "bisect"):

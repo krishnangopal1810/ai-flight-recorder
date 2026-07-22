@@ -1,0 +1,52 @@
+name: Reproducibility gap
+description: Report behavior that prevented a captured incident from being inspected, replayed, or compared.
+title: "[Bug]: "
+labels: [bug, needs-triage]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for helping make agent failures reproducible. Remove every credential, customer value, and production identifier before posting.
+  - type: textarea
+    id: incident
+    attributes:
+      label: What failed?
+      description: Describe the agent outcome and the investigation step that did not work.
+      placeholder: The recorded agent did…, then Flight Recorder…
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Minimal reproduction
+      description: Include sanitized commands, code, and the smallest deterministic example.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected evidence or behavior
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: v0.1.0-alpha.1 or commit SHA
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Affected surface
+      options: [Capture, Playback, Replay, Diff, Inspector, Demo launcher, CLI, SDK, Deployment]
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Public-data check
+      options:
+        - label: I removed secrets, customer content, production identifiers, and private capsule payloads.
+          required: true
+        - label: This is not a security vulnerability; vulnerabilities use private reporting.
+          required: true

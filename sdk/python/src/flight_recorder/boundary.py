@@ -6,14 +6,25 @@ import json
 import os
 import sys
 import threading
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import (
+    AsyncIterable,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Iterable,
+    Iterator,
+    Mapping,
+)
+from contextvars import ContextVar
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 import rfc8785
 from opentelemetry import trace
 
 T = TypeVar("T")
+E = TypeVar("E")
 
 
 class BoundaryError(RuntimeError):
@@ -22,7 +33,106 @@ class BoundaryError(RuntimeError):
 
 _plan_lock = threading.Lock()
 _cached_plan: tuple[str, Mapping[str, Any]] | None = None
-_occurrences: dict[str, int] = {}
+_occurrences: dict[tuple[str, str], int] = {}
+_run_scope: ContextVar[str | None] = ContextVar("flight_run_scope", default=None)
+_integration_depth: ContextVar[int] = ContextVar("flight_integration_depth", default=0)
+_LIVE = object()
+
+
+@dataclass(frozen=True)
+class StreamTermination:
+    """Stable stream termination evidence; elapsed timing is intentionally excluded."""
+
+    kind: str
+    error_type: str | None = None
+
+
+class BoundarySession:
+    """One boundary decision shared by values, typed adapters, and streams."""
+
+    def __init__(
+        self,
+        logical_key: str,
+        request: Any,
+        *,
+        boundary_class: str,
+        side_effect: str = "unknown",
+        replay_policy: str = "substitute",
+        sandbox: str | None = None,
+        parent_logical_key: str | None = None,
+        ignore_paths: tuple[str, ...] = (),
+        span: trace.Span | None = None,
+    ) -> None:
+        self.logical_key = logical_key
+        self.boundary_class = boundary_class
+        self.side_effect = side_effect
+        self.replay_policy = replay_policy
+        self.parent_logical_key = parent_logical_key
+        self.ignore_paths = ignore_paths
+        self.span = span or trace.get_current_span()
+        self.plan = _load_plan()
+        self.occurrence = _next_occurrence(logical_key, boundary_class, parent_logical_key)
+        self.request, self.request_overridden = _effective_request(
+            self.plan,
+            logical_key,
+            boundary_class,
+            parent_logical_key,
+            self.occurrence,
+            request,
+        )
+        self.request_digest = _safe_digest(
+            self.request, ignore_paths, self.plan is not None
+        )
+        _annotate(
+            logical_key,
+            boundary_class,
+            side_effect,
+            replay_policy,
+            self.request_digest,
+            sandbox,
+            parent_logical_key,
+            self.request,
+            ignore_paths,
+            span=self.span,
+        )
+        self.match = (
+            _match(
+                self.plan,
+                logical_key,
+                boundary_class,
+                parent_logical_key,
+                self.request_digest,
+                self.occurrence,
+            )
+            if self.plan is not None
+            else None
+        )
+
+    def action(self) -> object:
+        """Return a recorded response or the private live-call sentinel."""
+        if self.plan is None:
+            return _LIVE
+        if (
+            self.match is not None
+            and _substitution_allowed(self.plan, self.logical_key)
+            and self.match.get("response_state", "captured") == "captured"
+        ):
+            return self.match.get("response")
+        if self.replay_policy == "live" and _live_allowed(self.plan, self.logical_key):
+            return _LIVE
+        raise BoundaryError(
+            f"unmatched_boundary: {self.logical_key} occurrence {self.occurrence}; "
+            "live fallback is disabled"
+        )
+
+    def invoke(self, call: Callable[..., T]) -> T:
+        return _invoke(call, self.request, self.request_overridden)
+
+    async def invoke_async(self, call: Callable[..., Awaitable[T]]) -> T:
+        return await _invoke(call, self.request, self.request_overridden)
+
+    def capture_response(self, response: Any) -> None:
+        _capture_response(response, span=self.span)
 
 
 def boundary(
@@ -37,45 +147,20 @@ def boundary(
     parent_logical_key: str | None = None,
     ignore_paths: tuple[str, ...] = (),
 ) -> T:
-    plan = _load_plan()
-    occurrence = _next_occurrence(logical_key, boundary_class, parent_logical_key)
-    effective_request, request_overridden = _effective_request(
-        plan, logical_key, boundary_class, parent_logical_key, occurrence, request
-    )
-    request_digest = _safe_digest(effective_request, ignore_paths, plan is not None)
-    _annotate(
+    session = BoundarySession(
         logical_key,
-        boundary_class,
-        side_effect,
-        replay_policy,
-        request_digest,
-        sandbox,
-        parent_logical_key,
-        effective_request,
-        ignore_paths,
+        request,
+        boundary_class=boundary_class,
+        side_effect=side_effect,
+        replay_policy=replay_policy,
+        sandbox=sandbox,
+        parent_logical_key=parent_logical_key,
+        ignore_paths=ignore_paths,
     )
-    if plan is None:
-        response = _invoke(call, effective_request, False)
-        _capture_response(response)
-        return response
-    match = _match(
-        plan, logical_key, boundary_class, parent_logical_key, request_digest, occurrence
-    )
-    if (
-        match is not None
-        and _substitution_allowed(plan, logical_key)
-        and match.get("response_state", "captured") == "captured"
-    ):
-        recorded_response = match.get("response")
-        _capture_response(recorded_response)
-        return recorded_response  # type: ignore[return-value]
-    if replay_policy == "live" and _live_allowed(plan, logical_key):
-        response = _invoke(call, effective_request, request_overridden)
-        _capture_response(response)
-        return response
-    raise BoundaryError(
-        f"unmatched_boundary: {logical_key} occurrence {occurrence}; live fallback is disabled"
-    )
+    action = session.action()
+    response = session.invoke(call) if action is _LIVE else cast(T, action)
+    session.capture_response(response)
+    return response
 
 
 async def boundary_async(
@@ -90,48 +175,121 @@ async def boundary_async(
     parent_logical_key: str | None = None,
     ignore_paths: tuple[str, ...] = (),
 ) -> T:
-    plan = _load_plan()
-    occurrence = _next_occurrence(logical_key, boundary_class, parent_logical_key)
-    effective_request, request_overridden = _effective_request(
-        plan, logical_key, boundary_class, parent_logical_key, occurrence, request
-    )
-    request_digest = _safe_digest(effective_request, ignore_paths, plan is not None)
-    _annotate(
+    session = BoundarySession(
         logical_key,
-        boundary_class,
-        side_effect,
-        replay_policy,
-        request_digest,
-        sandbox,
-        parent_logical_key,
-        effective_request,
-        ignore_paths,
+        request,
+        boundary_class=boundary_class,
+        side_effect=side_effect,
+        replay_policy=replay_policy,
+        sandbox=sandbox,
+        parent_logical_key=parent_logical_key,
+        ignore_paths=ignore_paths,
     )
-    if plan is None:
-        response = await _invoke(call, effective_request, False)
-        _capture_response(response)
-        return response
-    match = _match(
-        plan, logical_key, boundary_class, parent_logical_key, request_digest, occurrence
-    )
-    if (
-        match is not None
-        and _substitution_allowed(plan, logical_key)
-        and match.get("response_state", "captured") == "captured"
-    ):
-        recorded_response = match.get("response")
-        _capture_response(recorded_response)
-        return recorded_response  # type: ignore[return-value]
-    if replay_policy == "live" and _live_allowed(plan, logical_key):
-        response = await _invoke(call, effective_request, request_overridden)
-        _capture_response(response)
-        return response
-    raise BoundaryError(
-        f"unmatched_boundary: {logical_key} occurrence {occurrence}; live fallback is disabled"
-    )
+    action = session.action()
+    response = await session.invoke_async(call) if action is _LIVE else cast(T, action)
+    session.capture_response(response)
+    return response
 
 
-def openai_boundary(logical_key: str, request: Any, call: Callable[[], T]) -> T:
+def boundary_stream(
+    logical_key: str,
+    request: Any,
+    call: Callable[..., Iterable[E]],
+    *,
+    boundary_class: str,
+    side_effect: str = "unknown",
+    replay_policy: str = "substitute",
+    sandbox: str | None = None,
+    parent_logical_key: str | None = None,
+    ignore_paths: tuple[str, ...] = (),
+    encode_event: Callable[[E], Any] = lambda value: value,
+    decode_event: Callable[[Any], E] = lambda value: value,
+    final_response: Callable[[], Any] | None = None,
+) -> Iterator[E]:
+    """Record or replay a synchronous stream as exact ordered typed events."""
+    session = BoundarySession(
+        logical_key,
+        request,
+        boundary_class=boundary_class,
+        side_effect=side_effect,
+        replay_policy=replay_policy,
+        sandbox=sandbox,
+        parent_logical_key=parent_logical_key,
+        ignore_paths=ignore_paths,
+    )
+    action = session.action()
+    if action is not _LIVE:
+        return _replay_stream(action, decode_event)
+    source = session.invoke(call)
+    return _record_stream(source, session, encode_event, final_response)
+
+
+def boundary_async_stream(
+    logical_key: str,
+    request: Any,
+    call: Callable[..., AsyncIterable[E] | Awaitable[AsyncIterable[E]]],
+    *,
+    boundary_class: str,
+    side_effect: str = "unknown",
+    replay_policy: str = "substitute",
+    sandbox: str | None = None,
+    parent_logical_key: str | None = None,
+    ignore_paths: tuple[str, ...] = (),
+    encode_event: Callable[[E], Any] = lambda value: value,
+    decode_event: Callable[[Any], E] = lambda value: value,
+    final_response: Callable[[], Any] | None = None,
+) -> AsyncIterator[E]:
+    """Record or replay an asynchronous stream as exact ordered typed events."""
+    session = BoundarySession(
+        logical_key,
+        request,
+        boundary_class=boundary_class,
+        side_effect=side_effect,
+        replay_policy=replay_policy,
+        sandbox=sandbox,
+        parent_logical_key=parent_logical_key,
+        ignore_paths=ignore_paths,
+    )
+    action = session.action()
+    if action is not _LIVE:
+        return _replay_async_stream(action, decode_event)
+
+    async def iterate() -> AsyncIterator[E]:
+        source = _invoke(call, session.request, session.request_overridden)
+        if inspect.isawaitable(source):
+            source = await source
+        events: list[dict[str, Any]] = []
+        captured = False
+        try:
+            async for event in source:
+                events.append({"type": _event_type(event), "payload": encode_event(event)})
+                yield event
+        except GeneratorExit:
+            captured = True
+            session.capture_response(_stream_envelope(events, StreamTermination("closed")))
+            raise
+        except BaseException as exc:
+            captured = True
+            session.capture_response(
+                _stream_envelope(
+                    events, StreamTermination("error", type(exc).__name__)
+                )
+            )
+            raise
+        else:
+            captured = True
+            final = final_response() if final_response is not None else None
+            session.capture_response(
+                _stream_envelope(events, StreamTermination("completed"), final)
+            )
+        finally:
+            if not captured:
+                session.capture_response(_stream_envelope(events, StreamTermination("abandoned")))
+
+    return iterate()
+
+
+def openai_boundary(logical_key: str, request: Any, call: Callable[..., T]) -> T:
     return boundary(
         logical_key,
         request,
@@ -143,7 +301,7 @@ def openai_boundary(logical_key: str, request: Any, call: Callable[[], T]) -> T:
 
 
 def mcp_boundary(
-    logical_key: str, request: Any, call: Callable[[], T], *, side_effect: str = "unknown"
+    logical_key: str, request: Any, call: Callable[..., T], *, side_effect: str = "unknown"
 ) -> T:
     return boundary(
         logical_key,
@@ -153,6 +311,140 @@ def mcp_boundary(
         side_effect=side_effect,
         replay_policy="substitute",
     )
+
+
+def _record_stream(
+    source: Iterable[E],
+    session: BoundarySession,
+    encode_event: Callable[[E], Any],
+    final_response: Callable[[], Any] | None,
+) -> Iterator[E]:
+    def iterate() -> Iterator[E]:
+        events: list[dict[str, Any]] = []
+        captured = False
+        try:
+            for event in source:
+                events.append({"type": _event_type(event), "payload": encode_event(event)})
+                yield event
+        except GeneratorExit:
+            captured = True
+            session.capture_response(_stream_envelope(events, StreamTermination("closed")))
+            close = getattr(source, "close", None)
+            if callable(close):
+                close()
+            raise
+        except BaseException as exc:
+            captured = True
+            session.capture_response(
+                _stream_envelope(events, StreamTermination("error", type(exc).__name__))
+            )
+            raise
+        else:
+            captured = True
+            final = final_response() if final_response is not None else None
+            session.capture_response(
+                _stream_envelope(events, StreamTermination("completed"), final)
+            )
+        finally:
+            if not captured:
+                session.capture_response(_stream_envelope(events, StreamTermination("abandoned")))
+
+    return iterate()
+
+
+def _replay_stream(value: Any, decode_event: Callable[[Any], E]) -> Iterator[E]:
+    events, termination = _parse_stream_envelope(value)
+
+    def iterate() -> Iterator[E]:
+        for event in events:
+            yield decode_event(event["payload"])
+        _raise_for_replayed_termination(termination)
+
+    return iterate()
+
+
+def _replay_async_stream(value: Any, decode_event: Callable[[Any], E]) -> AsyncIterator[E]:
+    events, termination = _parse_stream_envelope(value)
+
+    async def iterate() -> AsyncIterator[E]:
+        for event in events:
+            yield decode_event(event["payload"])
+        _raise_for_replayed_termination(termination)
+
+    return iterate()
+
+
+def _stream_envelope(
+    events: list[dict[str, Any]], termination: StreamTermination, final: Any = None
+) -> dict[str, Any]:
+    envelope: dict[str, Any] = {
+        "schema_version": "1",
+        "kind": "stream",
+        "events": events,
+        "termination": {"kind": termination.kind},
+    }
+    if termination.error_type is not None:
+        envelope["termination"]["error_type"] = termination.error_type
+    if final is not None:
+        envelope["final"] = final
+    return envelope
+
+
+def _parse_stream_envelope(
+    value: Any,
+) -> tuple[list[Mapping[str, Any]], Mapping[str, Any]]:
+    if (
+        not isinstance(value, Mapping)
+        or value.get("schema_version") != "1"
+        or value.get("kind") != "stream"
+        or not isinstance(value.get("events"), list)
+        or not isinstance(value.get("termination"), Mapping)
+    ):
+        raise BoundaryError("unsafe_replay: recorded stream envelope is malformed")
+    events: list[Mapping[str, Any]] = []
+    for event in value["events"]:
+        if not isinstance(event, Mapping) or "type" not in event or "payload" not in event:
+            raise BoundaryError("unsafe_replay: recorded stream event is malformed")
+        events.append(event)
+    termination = cast(Mapping[str, Any], value["termination"])
+    if termination.get("kind") not in {"completed", "closed", "error", "abandoned"}:
+        raise BoundaryError("unsafe_replay: recorded stream termination is unsupported")
+    return events, termination
+
+
+def _raise_for_replayed_termination(termination: Mapping[str, Any]) -> None:
+    kind = termination.get("kind")
+    if kind == "completed":
+        return
+    if kind == "error":
+        error_type = termination.get("error_type", "IntegrationError")
+        raise BoundaryError(f"replayed_stream_error: {error_type}")
+    raise BoundaryError(f"incomplete_stream: recorded stream terminated as {kind}")
+
+
+def _event_type(event: Any) -> str:
+    if isinstance(event, Mapping) and isinstance(event.get("type"), str):
+        return cast(str, event["type"])
+    value = getattr(event, "type", None)
+    if isinstance(value, str):
+        return value
+    return type(event).__name__
+
+
+def _integration_active() -> bool:
+    return _integration_depth.get() > 0
+
+
+class _IntegrationScope:
+    def __enter__(self) -> None:
+        self._token = _integration_depth.set(_integration_depth.get() + 1)
+
+    def __exit__(self, *_: object) -> None:
+        _integration_depth.reset(self._token)
+
+
+def _integration_scope() -> _IntegrationScope:
+    return _IntegrationScope()
 
 
 def _annotate(
@@ -165,30 +457,32 @@ def _annotate(
     parent_logical_key: str | None,
     request: Any,
     ignore_paths: tuple[str, ...],
+    *,
+    span: trace.Span | None = None,
 ) -> None:
     try:
-        span = trace.get_current_span()
-        span.set_attribute("flight.logical_key", logical_key)
-        span.set_attribute("flight.boundary.logical_key", logical_key)
-        span.set_attribute("flight.boundary.class", boundary_class)
+        target = span or trace.get_current_span()
+        target.set_attribute("flight.logical_key", logical_key)
+        target.set_attribute("flight.boundary.logical_key", logical_key)
+        target.set_attribute("flight.boundary.class", boundary_class)
         if parent_logical_key is not None:
-            span.set_attribute("flight.boundary.parent_logical_key", parent_logical_key)
-        span.set_attribute("flight.boundary.side_effect", side_effect)
-        span.set_attribute("flight.boundary.replay_policy", replay_policy)
-        span.set_attribute("flight.boundary.request_digest", request_digest)
-        span.set_attribute("flight.boundary.matching_mode", "exact")
-        span.set_attribute("flight.boundary.ignore_paths", json.dumps(ignore_paths))
-        _capture_content(span, "flight.input", request, "capture_boundary_request")
+            target.set_attribute("flight.boundary.parent_logical_key", parent_logical_key)
+        target.set_attribute("flight.boundary.side_effect", side_effect)
+        target.set_attribute("flight.boundary.replay_policy", replay_policy)
+        target.set_attribute("flight.boundary.request_digest", request_digest)
+        target.set_attribute("flight.boundary.matching_mode", "exact")
+        target.set_attribute("flight.boundary.ignore_paths", json.dumps(ignore_paths))
+        _capture_content(target, "flight.input", request, "capture_boundary_request")
         if sandbox is not None:
-            span.set_attribute("flight.boundary.sandbox", sandbox)
+            target.set_attribute("flight.boundary.sandbox", sandbox)
     except Exception as exc:
         _diagnostic("declare_boundary", exc)
 
 
-def _capture_response(response: Any) -> None:
+def _capture_response(response: Any, *, span: trace.Span | None = None) -> None:
     try:
         _capture_content(
-            trace.get_current_span(),
+            span or trace.get_current_span(),
             "flight.output",
             response,
             "capture_boundary_response",
@@ -241,18 +535,20 @@ def _match(
     request_digest: str,
     occurrence: int,
 ) -> Mapping[str, Any] | None:
-    candidates = [
+    candidates: list[Mapping[str, Any]] = [
         item
         for item in plan.get("boundaries", [])
         if item.get("logical_key") == logical_key
         and item.get("boundary_class") == boundary_class
         and item.get("parent_logical_key", "") == (parent_logical_key or "")
-        and item.get("occurrence", 0) == occurrence
     ]
     exact = [item for item in candidates if item.get("request_digest") == request_digest]
     if len(exact) == 1:
         return exact[0]
-    if len(exact) > 1 or len(candidates) > 1:
+    repeated = [item for item in exact if item.get("occurrence", 0) == occurrence]
+    if len(repeated) == 1:
+        return repeated[0]
+    if len(exact) > 1:
         raise BoundaryError(f"unmatched_boundary: ambiguous replay match for {logical_key}")
     return None
 
@@ -307,11 +603,32 @@ def _substitution_allowed(plan: Mapping[str, Any], logical_key: str) -> bool:
 
 
 def _next_occurrence(logical_key: str, boundary_class: str, parent_logical_key: str | None) -> int:
-    occurrence_key = f"{parent_logical_key or ''}\0{boundary_class}\0{logical_key}"
+    boundary_key = f"{parent_logical_key or ''}\0{boundary_class}\0{logical_key}"
+    occurrence_key = (_scope_key(), boundary_key)
     with _plan_lock:
         value = _occurrences.get(occurrence_key, 0)
         _occurrences[occurrence_key] = value + 1
         return value
+
+
+def _scope_key() -> str:
+    explicit = _run_scope.get()
+    if explicit is not None:
+        return explicit
+    current_span = trace.get_current_span()
+    get_context = getattr(current_span, "get_span_context", None)
+    span_context = get_context() if callable(get_context) else None
+    if span_context is not None and span_context.is_valid:
+        return f"trace:{span_context.trace_id:032x}"
+    try:
+        import asyncio
+
+        task = asyncio.current_task()
+    except RuntimeError:
+        task = None
+    if task is not None:
+        return f"task:{id(task)}"
+    return f"thread:{threading.get_ident()}"
 
 
 def _digest(value: Any, ignore_paths: tuple[str, ...] = ()) -> str:

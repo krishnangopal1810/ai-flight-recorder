@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	collectortrace "go.opentelemetry.io/proto/otlp/collector/trace/v1"
@@ -23,12 +24,28 @@ import (
 
 type Receiver struct {
 	collectortrace.UnimplementedTraceServiceServer
-	capsules  *service.CapsuleService
-	grace     time.Duration
-	mu        sync.Mutex
-	pending   map[string]*pendingTrace
-	finalized map[string]finalizedTrace
-	slots     chan struct{}
+	capsules     *service.CapsuleService
+	grace        time.Duration
+	mu           sync.Mutex
+	pending      map[string]*pendingTrace
+	finalized    map[string]finalizedTrace
+	slots        chan struct{}
+	acceptedLogs atomic.Int64
+	rejectedLogs atomic.Int64
+	orphanedLogs atomic.Int64
+}
+
+// TraceService is the gRPC adapter for traces. Keeping it separate from the
+// logs adapter avoids the two OTLP services' overloaded Export method names.
+type TraceService struct {
+	collectortrace.UnimplementedTraceServiceServer
+	receiver *Receiver
+}
+
+func NewTraceService(receiver *Receiver) *TraceService { return &TraceService{receiver: receiver} }
+
+func (s *TraceService) Export(ctx context.Context, request *collectortrace.ExportTraceServiceRequest) (*collectortrace.ExportTraceServiceResponse, error) {
+	return s.receiver.Export(ctx, request)
 }
 
 type finalizedTrace struct {
@@ -314,6 +331,35 @@ func maxDuration(left, right time.Duration) time.Duration {
 		return left
 	}
 	return right
+}
+
+type LogStats struct {
+	Accepted int64
+	Rejected int64
+	Orphaned int64
+}
+
+func (r *Receiver) LogStats() LogStats {
+	return LogStats{Accepted: r.acceptedLogs.Load(), Rejected: r.rejectedLogs.Load(), Orphaned: r.orphanedLogs.Load()}
+}
+
+func (r *Receiver) RecordOrphanedLogs(count int) {
+	if count > 0 {
+		r.orphanedLogs.Add(int64(count))
+	}
+}
+
+func (r *Receiver) touchLogs(projectID, traceID string) {
+	key := projectID + "\x00" + traceID
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	pending := r.pending[key]
+	if pending == nil || pending.timer == nil || !pending.rootSeen {
+		return
+	}
+	if pending.timer.Stop() {
+		pending.timer.Reset(r.grace)
+	}
 }
 
 func containsOnlyRecordedSpans(capsule types.RunCapsule, fragment service.CaptureRequest) bool {

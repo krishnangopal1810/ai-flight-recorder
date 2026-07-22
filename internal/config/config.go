@@ -92,9 +92,15 @@ type RuntimeConfig struct {
 var ociNetworkName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$`)
 
 type FlightFile struct {
-	Version    string           `yaml:"version"`
-	Entrypoint types.Entrypoint `yaml:"entrypoint"`
+	Version    string           `yaml:"version" json:"version"`
+	ProjectID  string           `yaml:"project_id,omitempty" json:"project_id,omitempty"`
+	Entrypoint types.Entrypoint `yaml:"entrypoint" json:"entrypoint"`
 }
+
+var projectIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
+var environmentNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+var hostnamePattern = regexp.MustCompile(`^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
+var imageDigestPattern = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
 
 func Default(dataDir string) Config {
 	return Config{
@@ -110,6 +116,7 @@ func Default(dataDir string) Config {
 		Policy: CapturePolicy{
 			Version: "1", Mode: "strict", MaxFieldSize: 1 << 20, DefaultRetention: 30 * 24 * time.Hour,
 			Rules: []PolicyRule{
+				{Name: "replay-credential-names", Path: "provenance.entrypoint.environment*", Action: "keep"},
 				{Name: "authorization", Path: "*", Pattern: `(?i)(authorization|api[_-]?key|password|token)`, Action: "redact", Replacement: "[REDACTED]"},
 				{Name: "email", Path: "*", Pattern: `(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b`, Action: "redact", Replacement: "[REDACTED]"},
 			},
@@ -148,16 +155,60 @@ func LoadFlightFile(path string) (FlightFile, error) {
 	if err := yaml.Unmarshal(data, &file); err != nil {
 		return FlightFile{}, types.NewError(types.ErrValidation, "invalid flight.yaml", "fix the YAML fields reported by the parser", err)
 	}
-	if file.Version != "1" {
-		return FlightFile{}, types.NewError(types.ErrValidation, "unsupported flight.yaml version", "set version: 1", nil)
-	}
-	if len(file.Entrypoint.Command) == 0 {
-		return FlightFile{}, types.NewError(types.ErrValidation, "entrypoint command is required", "set entrypoint.command to an argv list", nil)
-	}
-	if file.Entrypoint.InputMode != "stdin_json" || file.Entrypoint.OutputMode != "stdout_json" {
-		return FlightFile{}, types.NewError(types.ErrValidation, "unsupported entrypoint I/O mode", "V1 requires stdin_json and stdout_json", nil)
+	if err := ValidateFlightFile(&file); err != nil {
+		return FlightFile{}, err
 	}
 	return file, nil
+}
+
+func ValidateFlightFile(file *FlightFile) error {
+	if file.Version != "1" {
+		return types.NewError(types.ErrValidation, "unsupported flight.yaml version", "set version: 1", nil)
+	}
+	if file.ProjectID != "" {
+		if err := ValidateProjectID(file.ProjectID); err != nil {
+			return err
+		}
+	}
+	if len(file.Entrypoint.Command) == 0 {
+		return types.NewError(types.ErrValidation, "entrypoint command is required", "set entrypoint.command to an argv list", nil)
+	}
+	if file.Entrypoint.InputMode != "stdin_json" || file.Entrypoint.OutputMode != "stdout_json" {
+		return types.NewError(types.ErrValidation, "unsupported entrypoint I/O mode", "V1 requires stdin_json and stdout_json", nil)
+	}
+	if file.Entrypoint.Image != "" && !imageDigestPattern.MatchString(file.Entrypoint.Image) {
+		return types.NewError(types.ErrValidation, "entrypoint image is not immutable", "use a sha256 image ID or omit image so --replay-ready can build it", nil)
+	}
+	seenEnvironment := map[string]bool{}
+	for _, name := range file.Entrypoint.Environment {
+		if !environmentNamePattern.MatchString(name) {
+			return types.NewError(types.ErrValidation, "invalid replay credential name", "use an environment variable name such as OPENAI_API_KEY", nil)
+		}
+		if seenEnvironment[name] {
+			return types.NewError(types.ErrValidation, "duplicate replay credential name", "declare each environment name once", nil)
+		}
+		seenEnvironment[name] = true
+	}
+	seenHosts := map[string]bool{}
+	for index, raw := range file.Entrypoint.ModelHosts {
+		host := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(raw), "."))
+		if !hostnamePattern.MatchString(host) {
+			return types.NewError(types.ErrValidation, "invalid model host", "use a hostname without a scheme, port, path, or wildcard", nil)
+		}
+		if seenHosts[host] {
+			return types.NewError(types.ErrValidation, "duplicate model host", "declare each model hostname once", nil)
+		}
+		seenHosts[host] = true
+		file.Entrypoint.ModelHosts[index] = host
+	}
+	return nil
+}
+
+func ValidateProjectID(projectID string) error {
+	if !projectIDPattern.MatchString(projectID) {
+		return types.NewError(types.ErrValidation, "invalid project ID", "use letters, numbers, dots, underscores, or hyphens", nil)
+	}
+	return nil
 }
 
 func (c Config) Validate() error {

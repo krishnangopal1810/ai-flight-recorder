@@ -1,0 +1,39 @@
+name: Focused proposal
+description: Propose one outcome tied to a real agent investigation.
+title: "[Proposal]: "
+labels: [proposal, needs-triage]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Investigation problem
+      description: What cannot an agent engineer do today?
+    validations:
+      required: true
+  - type: textarea
+    id: incident
+    attributes:
+      label: Concrete incident pattern
+      description: Describe the sanitized failure that motivates this proposal.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Smallest useful outcome
+    validations:
+      required: true
+  - type: textarea
+    id: proof
+    attributes:
+      label: Acceptance evidence
+      description: What executable journey would prove the outcome safely?
+    validations:
+      required: true
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: This proposal does not require silent live replay fallback or weaker capture policy.
+          required: true

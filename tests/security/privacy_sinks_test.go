@@ -96,7 +96,7 @@ func exercisePrivacySinks(t *testing.T, repo repository.Repository, traceID stri
 	toolDefinition := mustJSON(t, []any{map[string]any{"name": "lookup", "description": privacySeeds[3]}})
 	artifactData := mustJSON(t, map[string]any{"password": privacySeeds[2], "token": privacySeeds[1]})
 	request := service.CaptureRequest{
-		TraceID: traceID, ProjectID: "privacy-" + traceID + "-" + privacySeeds[0], ServiceName: privacySeeds[1], TerminalStatus: "ok",
+		TraceID: traceID, ProjectID: "privacy-" + traceID, ServiceName: privacySeeds[1], TerminalStatus: "ok",
 		Provenance:      types.Provenance{RepositoryURL: privacySeeds[3], CommitSHA: "revision", Runtime: "go", EnvironmentFacts: map[string]string{"PASSWORD": privacySeeds[2]}, Entrypoint: &types.Entrypoint{Command: []string{"/agent", privacySeeds[1]}, Image: "sha256:" + strings.Repeat("a", 64)}},
 		Model:           types.ModelConfiguration{Provider: privacySeeds[2], Parameters: map[string]any{"api_key": privacySeeds[0]}},
 		ToolDefinitions: []service.CapturePayload{{Data: toolDefinition, MediaType: "application/json"}},
@@ -111,6 +111,14 @@ func exercisePrivacySinks(t *testing.T, repo repository.Repository, traceID stri
 		StartTime: time.Unix(1, 0), EndTime: time.Unix(2, 0),
 	}
 	capsules := service.NewCapsuleService(repo, policy)
+	logBody := mustJSON(t, map[string]any{"message": privacySeeds[0], "nested": map[string]any{"email": privacySeeds[3]}})
+	logAttributes := mustJSON(t, map[string]any{"token": privacySeeds[1], "password": privacySeeds[2], "drop": privacySeeds[4]})
+	if err := capsules.StageLog(ctx, request.ProjectID, request.TraceID, service.CaptureLog{
+		Record: types.LogRecord{SpanID: "0808080808080802", ServiceName: privacySeeds[1], Timestamp: time.Unix(1, 1), SeverityNumber: 17, SeverityText: "ERROR", EventName: privacySeeds[0], ScopeName: privacySeeds[3]},
+		Body:   logBody, BodyType: "application/json", Attributes: logAttributes, AttributesType: "application/json",
+	}, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
 	capsule, err := capsules.Capture(ctx, request)
 	if err != nil {
 		t.Fatal(err)
@@ -123,7 +131,7 @@ func exercisePrivacySinks(t *testing.T, repo repository.Repository, traceID stri
 		t.Fatal(err)
 	}
 	assertNoPrivacySeeds(t, "capsule manifest and searchable identity", manifest)
-	for _, raw := range [][]byte{input, output, toolDefinition, artifactData} {
+	for _, raw := range [][]byte{input, output, toolDefinition, artifactData, logBody, logAttributes} {
 		if bytes.Contains(manifest, []byte(service.DigestBytes(raw))) {
 			t.Fatalf("capsule retained a pre-policy digest for %q", raw)
 		}
