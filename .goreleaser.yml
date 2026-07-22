@@ -15,7 +15,7 @@ builds:
     flags:
       - -trimpath
     ldflags:
-      - -s -w
+      - -s -w -X github.com/krishnangopal1810/ai-flight-recorder/internal/version.Release={{ .Version }}
 
 archives:
   - ids: [flight]
@@ -29,6 +29,9 @@ checksum:
 sboms:
   - artifacts: archive
     disable: false
+
+release:
+  draft: true
 
 changelog:
   sort: asc

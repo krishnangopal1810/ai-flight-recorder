@@ -1,6 +1,7 @@
 {
   "name": "@ai-flight-recorder/sdk",
   "version": "0.1.0",
+  "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -8,21 +9,70 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./logging": {
+      "types": "./dist/logging.d.ts",
+      "import": "./dist/logging.js"
+    },
+    "./openai": {
+      "types": "./dist/openai.d.ts",
+      "import": "./dist/openai.js"
+    },
+    "./langchain": {
+      "types": "./dist/langchain.d.ts",
+      "import": "./dist/langchain.js"
+    },
+    "./telemetry": {
+      "types": "./dist/telemetry.d.ts",
+      "import": "./dist/telemetry.js"
     }
   },
   "files": [
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "test": "vitest run src/index.test.ts"
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json",
+    "test": "vitest run src/*.test.ts"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.0",
     "canonicalize": "^3.0.0"
   },
+  "peerDependencies": {
+    "@langchain/core": ">=1 <2",
+    "@opentelemetry/api-logs": "^0.220.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.220.0",
+    "@opentelemetry/exporter-logs-otlp-http": "^0.220.0",
+    "@opentelemetry/resources": "^2.9.0",
+    "@opentelemetry/sdk-logs": "^0.220.0",
+    "@opentelemetry/sdk-trace-base": "^2.9.0",
+    "@opentelemetry/sdk-trace-node": "^2.9.0",
+    "openai": ">=6 <7"
+  },
+  "peerDependenciesMeta": {
+    "@langchain/core": {"optional": true},
+    "@opentelemetry/api-logs": {"optional": true},
+    "@opentelemetry/exporter-logs-otlp-http": {"optional": true},
+    "@opentelemetry/exporter-trace-otlp-http": {"optional": true},
+    "@opentelemetry/resources": {"optional": true},
+    "@opentelemetry/sdk-logs": {"optional": true},
+    "@opentelemetry/sdk-trace-base": {"optional": true},
+    "@opentelemetry/sdk-trace-node": {"optional": true},
+    "openai": {"optional": true}
+  },
   "devDependencies": {
+    "@emnapi/core": "1.11.2",
+    "@emnapi/runtime": "1.11.2",
+    "@langchain/core": "1.2.3",
+    "@opentelemetry/api-logs": "0.220.0",
+    "@opentelemetry/exporter-logs-otlp-http": "0.220.0",
+    "@opentelemetry/exporter-trace-otlp-http": "0.220.0",
+    "@opentelemetry/resources": "2.9.0",
+    "@opentelemetry/sdk-logs": "0.220.0",
+    "@opentelemetry/sdk-trace-base": "2.9.0",
+    "@opentelemetry/sdk-trace-node": "2.9.0",
     "@types/node": "^22.10.2",
+    "openai": "6.48.0",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"
   }

@@ -61,6 +61,13 @@ def model_decision(request_body: dict[str, Any]) -> dict[str, Any]:
     return json.loads(content)
 
 
+def recorded_dependency(name: str, response: dict[str, Any]) -> dict[str, Any]:
+    """Fail the demo if a recorded dependency callback ever runs during replay."""
+    if os.environ.get("FLIGHT_REPLAY_PLAN"):
+        raise RuntimeError(f"recorded dependency went live during replay: {name}")
+    return response
+
+
 def main() -> int:
     incident = json.load(sys.stdin)
     provider = configure_tracing()
@@ -75,7 +82,9 @@ def main() -> int:
         register_entrypoint(
             ["python", "/app/agent.py"],
             image=os.environ.get("FLIGHT_REPLAY_IMAGE"),
+            environment=["MODEL_TOKEN"],
             model_hosts=[MODEL_HOST],
+            model_override=True,
             input_mode="stdin_json",
             output_mode="stdout_json",
         )
@@ -85,7 +94,7 @@ def main() -> int:
             policy = boundary(
                 "retriever.refund-policy",
                 {"policy": "refunds"},
-                lambda: POLICY,
+                lambda: recorded_dependency("retriever.refund-policy", POLICY),
                 boundary_class="retriever",
                 side_effect="read_only",
                 replay_policy="substitute",
@@ -103,14 +112,17 @@ def main() -> int:
             eligibility = boundary(
                 "tool.refund-eligibility",
                 eligibility_request,
-                lambda: {
-                    "eligible": (
-                        eligibility_request["days_since_purchase"]
-                        <= eligibility_request["refund_window_days"]
-                        and eligibility_request["amount_usd"]
-                        <= eligibility_request["maximum_amount_usd"]
-                    )
-                },
+                lambda: recorded_dependency(
+                    "tool.refund-eligibility",
+                    {
+                        "eligible": (
+                            eligibility_request["days_since_purchase"]
+                            <= eligibility_request["refund_window_days"]
+                            and eligibility_request["amount_usd"]
+                            <= eligibility_request["maximum_amount_usd"]
+                        )
+                    },
+                ),
                 boundary_class="tool",
                 side_effect="read_only",
                 replay_policy="substitute",
@@ -123,7 +135,7 @@ def main() -> int:
             else "Be conservative and minimize refunds even when a request is eligible."
         )
         model_request = {
-            "model": "flight-fake-v1",
+            "model": model_variant,
             "messages": [
                 {
                     "role": "system",
@@ -137,7 +149,7 @@ def main() -> int:
         }
         with tracer.start_as_current_span("refund-decision") as model_span:
             model_span.set_attribute("openinference.span.kind", "LLM")
-            model_span.set_attribute("gen_ai.request.model", "flight-fake-v1")
+            model_span.set_attribute("gen_ai.request.model", model_variant)
             decision = boundary(
                 "llm.refund-decision",
                 model_request,

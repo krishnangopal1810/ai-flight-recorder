@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://ai-flight-recorder.dev/schemas/run-capsule-1.0.json",
+  "$id": "https://ai-flight-recorder.dev/schemas/run-capsule-1.1.json",
   "title": "AI Flight Recorder Run Capsule",
   "type": "object",
   "required": ["schema_version", "capsule_id", "trace_id", "project_id", "service_name", "start_time", "end_time", "terminal_status", "integrity", "completeness", "provenance", "operations", "privacy"],
@@ -21,6 +21,7 @@
     "model_configuration": {"$ref": "#/$defs/model_configuration"},
     "artifacts": {"type": "array", "items": {"$ref": "#/$defs/artifact"}},
     "operations": {"type": "array", "items": {"$ref": "#/$defs/operation"}},
+    "logs": {"type": "array", "items": {"$ref": "#/$defs/log_record"}},
     "boundaries": {"type": "array", "items": {"$ref": "boundary.schema.json"}},
     "privacy": {"$ref": "#/$defs/privacy"},
     "evaluations": {"type": "array", "items": {"$ref": "#/$defs/evaluation"}},
@@ -78,6 +79,7 @@
         "timeout": {"type": "integer"},
         "environment": {"type": "array", "items": {"type": "string"}},
         "model_hosts": {"type": "array", "items": {"type": "string"}},
+		"model_override": {"type": "boolean"},
         "sandboxes": {"type": "object", "additionalProperties": {"type": "string"}},
         "cpu_limit": {"type": "number", "minimum": 0},
         "memory_limit_mb": {"type": "integer", "minimum": 0}
@@ -145,6 +147,27 @@
         "semantic_convention_version": {"type": "string"},
         "attributes": {"type": "object", "additionalProperties": {"type": "string"}},
         "sequence": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": true
+    },
+    "log_record": {
+      "type": "object",
+      "required": ["id", "timestamp", "severity_number"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^log_[a-f0-9]{64}$"},
+        "span_id": {"type": "string"},
+        "service_name": {"type": "string"},
+        "timestamp": {"type": "string", "format": "date-time"},
+        "observed_timestamp": {"type": "string", "format": "date-time"},
+        "severity_number": {"type": "integer", "minimum": 0},
+        "severity_text": {"type": "string"},
+        "event_name": {"type": "string"},
+        "body": {"$ref": "#/$defs/payload"},
+        "attributes": {"$ref": "#/$defs/payload"},
+        "dropped_attributes_count": {"type": "integer", "minimum": 0},
+        "scope_name": {"type": "string"},
+        "scope_version": {"type": "string"},
+        "scope_schema_url": {"type": "string"}
       },
       "additionalProperties": true
     },

@@ -77,3 +77,5 @@ if missing:
     raise SystemExit('\n'.join(missing))
 print(f'docs-check: validated {len(docs)} Markdown files')
 PY
+
+./scripts/check-readme.py

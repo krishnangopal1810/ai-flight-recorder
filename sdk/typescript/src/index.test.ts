@@ -3,9 +3,15 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { trace } from "@opentelemetry/api";
-import { boundary, setRunProvenance, testing } from "./index.js";
+import { boundary, registerEntrypoint, setRunProvenance, testing } from "./index.js";
 
-afterEach(() => { delete process.env.FLIGHT_REPLAY_PLAN; testing.reset(); });
+afterEach(() => {
+	delete process.env.FLIGHT_REPLAY_PLAN;
+	delete process.env.FLIGHT_PROJECT_ID;
+	delete process.env.FLIGHT_ENTRYPOINT_JSON;
+	delete process.env.OPENAI_API_KEY;
+	testing.reset();
+});
 
 describe("boundary", () => {
 	it("emits canonical dependency and runtime provenance", () => {
@@ -15,6 +21,41 @@ describe("boundary", () => {
 		expect(attributes.get("flight.runtime")).toBe("node:22");
 		expect(attributes.get("flight.dependency_lock")).toBe('{"package-lock.json":"sha256:bbb","package.json":"sha256:aaa"}');
 		expect(attributes.get("flight.feature_flags")).toBe('{"retrieval":"v2"}');
+		getSpan.mockRestore();
+	});
+
+	it("uses CLI metadata without recording credential values", () => {
+		const attributes = new Map<string, unknown>();
+		const events: Array<[string, Record<string, unknown>]> = [];
+		const getSpan = vi.spyOn(trace, "getSpan").mockReturnValue({
+			setAttribute: (key: string, value: unknown) => { attributes.set(key, value); },
+			addEvent: (name: string, values: Record<string, unknown>) => { events.push([name, values]); },
+		} as never);
+		process.env.FLIGHT_PROJECT_ID = "support";
+		process.env.FLIGHT_ENTRYPOINT_JSON = JSON.stringify({
+			schema_version: "1",
+			entrypoint: {
+				command: ["node", "agent.js"],
+				image: `sha256:${"a".repeat(64)}`,
+				working_dir: "/workspace",
+				timeout: 120_000_000_000,
+				environment: ["OPENAI_API_KEY"],
+				model_hosts: ["api.openai.com"],
+				model_override: true,
+				sandboxes: {mail: "https://mail.test.invalid"},
+			},
+		});
+		process.env.OPENAI_API_KEY = "must-not-be-recorded";
+
+		setRunProvenance();
+		registerEntrypoint();
+
+		expect(attributes.get("flight.project.id")).toBe("support");
+		expect(attributes.get("flight.entrypoint.environment")).toBe('["OPENAI_API_KEY"]');
+		expect(attributes.get("flight.entrypoint.model_hosts")).toBe('["api.openai.com"]');
+		expect(attributes.get("flight.entrypoint.model_override")).toBe(true);
+		expect(JSON.stringify([...attributes])).not.toContain("must-not-be-recorded");
+		expect(events[0]?.[1]["flight.sandbox.name"]).toBe("mail");
 		getSpan.mockRestore();
 	});
 

@@ -1,0 +1,41 @@
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule: {interval: weekly}
+    groups:
+      go-dependencies: {patterns: ["*"]}
+  - package-ecosystem: npm
+    directory: /web
+    schedule: {interval: weekly}
+    groups:
+      inspector-dependencies: {patterns: ["*"]}
+  - package-ecosystem: npm
+    directory: /sdk/typescript
+    schedule: {interval: weekly}
+    groups:
+      typescript-sdk-dependencies: {patterns: ["*"]}
+  - package-ecosystem: npm
+    directory: /examples/reference-typescript
+    schedule: {interval: weekly}
+    groups:
+      typescript-example-dependencies: {patterns: ["*"]}
+  - package-ecosystem: pip
+    directory: /sdk/python
+    schedule: {interval: weekly}
+    groups:
+      python-sdk-dependencies: {patterns: ["*"]}
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: {interval: weekly}
+    groups:
+      actions: {patterns: ["*"]}
+  - package-ecosystem: docker
+    directory: /deploy
+    schedule: {interval: weekly}
+  - package-ecosystem: docker
+    directory: /deploy/demo
+    schedule: {interval: weekly}
+  - package-ecosystem: docker
+    directory: /examples/investigation-agent
+    schedule: {interval: weekly}

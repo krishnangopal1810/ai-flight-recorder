@@ -65,3 +65,22 @@ func TestSessionAdvertisesLoopbackLocalModeWithoutCredentials(t *testing.T) {
 		t.Fatalf("local session response mentioned credentials: %s", response.Body.String())
 	}
 }
+
+func TestReplayRequestsDefaultToOfflineModelSubstitution(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/replays/preflight", strings.NewReader(`{"source_capsule_id":"capsule"}`))
+	decoded, err := decodeReplayRequest(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !decoded.SubstituteLLM {
+		t.Fatal("omitted model policy defaulted to live access")
+	}
+	explicit := httptest.NewRequest(http.MethodPost, "/api/v1/replays/preflight", strings.NewReader(`{"source_capsule_id":"capsule","substitute_llm":false}`))
+	decoded, err = decodeReplayRequest(explicit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decoded.SubstituteLLM {
+		t.Fatal("explicit live-model choice was overwritten")
+	}
+}

@@ -77,11 +77,11 @@ func (s *EvaluatorService) Run(ctx context.Context, request types.EvaluatorRunRe
 	if err := s.Validate(request.Definition); err != nil {
 		return types.EvaluatorRun{}, err
 	}
-	baseline, err := s.capsules.Get(ctx, request.BaselineID, true)
+	baseline, err := s.capsules.GetWithoutLogs(ctx, request.BaselineID)
 	if err != nil {
 		return types.EvaluatorRun{}, err
 	}
-	candidate, err := s.capsules.Get(ctx, request.CandidateID, true)
+	candidate, err := s.capsules.GetWithoutLogs(ctx, request.CandidateID)
 	if err != nil {
 		return types.EvaluatorRun{}, err
 	}

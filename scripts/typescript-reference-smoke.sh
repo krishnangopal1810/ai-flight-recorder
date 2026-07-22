@@ -3,7 +3,7 @@ set -euo pipefail
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   echo 'usage: scripts/typescript-reference-smoke.sh <artifact-directory> <python-source-capsule>'
-  echo 'Proves TypeScript/Python OTLP parity, five-boundary all-substituted replay, and safe incomplete-metadata diagnostics.'
+  echo 'Proves TypeScript/Python trace and log OTLP parity, five-boundary all-substituted replay, and safe incomplete-metadata diagnostics.'
   exit 0
 fi
 if [[ $# -ne 2 ]]; then
@@ -114,8 +114,8 @@ printf '{"policy_id":"refund"}' | \
 source_id=$(new_capsule_id "$artifact_root/normal-before.json" "$artifact_root/normal-after.json" "$normal_project")
 printf '%s\n' "$source_id" >"$artifact_root/source-capsule-id.txt"
 authorized_curl "$base_url/api/v1/capsules/$source_id" >"$artifact_root/source-capsule.json"
-python3 - "$python_capsule" "$artifact_root/source-capsule.json" "$image_id" <<'PY'
-import json, sys
+python3 - "$python_capsule" "$artifact_root/source-capsule.json" "$image_id" "$base_url" "$token" <<'PY'
+import json, sys, urllib.parse, urllib.request
 python_capsule, typescript_capsule = (json.load(open(path)) for path in sys.argv[1:3])
 assert typescript_capsule["project_id"] == "reference-replay-typescript", typescript_capsule
 assert typescript_capsule["service_name"] == "typescript-reference-agent", typescript_capsule
@@ -139,6 +139,31 @@ assert [item[0] for item in boundaries(typescript_capsule)] == ["retriever.polic
 assert root(typescript_capsule)["input"]["digest"] == root(python_capsule)["input"]["digest"]
 assert root(typescript_capsule)["output"]["digest"] == root(python_capsule)["output"]["digest"]
 assert typescript_capsule["model_configuration"]["tool_definitions"] == python_capsule["model_configuration"]["tool_definitions"]
+
+def load_payload(capsule, reference):
+    digest = urllib.parse.quote(reference["digest"], safe="")
+    url = f"{sys.argv[4]}/api/v1/capsules/{capsule['capsule_id']}/payloads/{digest}"
+    request = urllib.request.Request(url, headers={"Authorization": f"Bearer {sys.argv[5]}"})
+    with urllib.request.urlopen(request, timeout=10) as response:
+        return json.load(response)
+
+def logs(capsule):
+    operation_names = {item["span_id"]: item["name"] for item in capsule["operations"]}
+    projection = []
+    for item in capsule.get("logs", []):
+        body = load_payload(capsule, item["body"])
+        attributes = load_payload(capsule, item["attributes"])
+        custom = {key: attributes[key] for key in ["policy_id", "days_since_purchase", "expected"] if key in attributes}
+        projection.append((operation_names.get(item.get("span_id"), "run"), item["severity_number"], item["severity_text"], body, custom))
+    return sorted(projection)
+
+expected_logs = sorted([
+    ("answer-policy", 9, "INFO", "answer policy started", {"policy_id": "refund"}),
+    ("eligibility-tool", 13, "WARN", "checking refund eligibility", {"days_since_purchase": 12}),
+    ("policy-lookup", 17, "ERROR", "reference conformance error record", {"expected": True}),
+])
+assert logs(python_capsule) == expected_logs, logs(python_capsule)
+assert logs(typescript_capsule) == expected_logs, logs(typescript_capsule)
 assert root(typescript_capsule)["attributes"]["flight.reference.model_callback_invoked"] == "true"
 for kind in ["retrieval", "mcp", "tool", "api"]:
     assert root(typescript_capsule)["attributes"][f"flight.reference.{kind}_callback_invoked"] == "true"
@@ -146,7 +171,7 @@ PY
 
 python3 - "$source_id" >"$artifact_root/replay-request.json" <<'PY'
 import json, sys
-print(json.dumps({"source_capsule_id": sys.argv[1], "model": "substitute-only", "substitute_llm": True, "allow_sandboxed_side_effects": False}, separators=(",", ":")))
+print(json.dumps({"source_capsule_id": sys.argv[1], "substitute_llm": True, "allow_sandboxed_side_effects": False}, separators=(",", ":")))
 PY
 authorized_curl -H 'Content-Type: application/json' --data-binary @"$artifact_root/replay-request.json" \
   "$base_url/api/v1/replays" >"$artifact_root/replay-created.json"

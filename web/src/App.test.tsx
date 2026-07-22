@@ -47,7 +47,7 @@ it("guides a user by setup and explains the tracing prerequisite before showing 
 
   fireEvent.click(screen.getByRole("button", {name: "Yes, tracing is set up"}));
   expect(screen.getByLabelText("Your agent command")).toHaveValue("python agent.py");
-  expect(screen.getByText(/flight --url .* record -- python agent\.py/)).toBeInTheDocument();
+  expect(screen.getByText(/flight --url .* record --project my-agent -- python agent\.py/)).toBeInTheDocument();
   expect(screen.getByText("Need to change a model or tool value and replay this run?")).toBeInTheDocument();
   expect(await screen.findByRole("button", {name: "Start listening"})).toBeEnabled();
 

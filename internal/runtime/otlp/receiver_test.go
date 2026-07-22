@@ -192,11 +192,15 @@ func TestAFRCAP002ProvenanceParsesRecordedFactsWithoutFabrication(t *testing.T) 
 	span := keyValues([]*commonv1.KeyValue{
 		stringKV("flight.project.id", "support"), stringKV("flight.repository.url", "https://example.invalid/agent.git"), stringKV("flight.git.commit", strings.Repeat("a", 40)), stringKV("flight.git.dirty_digest", "sha256:"+strings.Repeat("d", 64)),
 		stringKV("flight.build.id", "build-1"), stringKV("flight.runtime", "python:3.13"), stringKV("flight.dependency_lock", `{"uv.lock":"sha256:aaa"}`), stringKV("flight.feature_flags", `{"retrieval":"v2"}`), stringKV("flight.environment.REGION.digest", "sha256:region"),
-		stringKV("flight.entrypoint.command", `["python","agent.py"]`), stringKV("flight.entrypoint.image", "sha256:"+strings.Repeat("i", 64)), stringKV("flight.entrypoint.model_hosts", `["model.test.invalid"]`),
+		stringKV("flight.entrypoint.command", `["python","agent.py"]`), stringKV("flight.entrypoint.image", "sha256:"+strings.Repeat("i", 64)),
+		stringKV("flight.entrypoint.working_dir", "/workspace"), stringKV("flight.entrypoint.dockerfile", "Dockerfile.replay"), stringKV("flight.entrypoint.context", "."),
+		stringKV("flight.entrypoint.input_mode", "stdin_json"), stringKV("flight.entrypoint.output_mode", "stdout_json"), stringKV("flight.entrypoint.timeout_ns", "120000000000"),
+		stringKV("flight.entrypoint.cpu_limit", "1.5"), stringKV("flight.entrypoint.memory_limit_mb", "1024"), stringKV("flight.entrypoint.environment", `["MODEL_TOKEN"]`),
+		stringKV("flight.entrypoint.model_hosts", `["model.test.invalid"]`), boolKV("flight.entrypoint.model_override", true),
 	})
 	resource := keyValues([]*commonv1.KeyValue{stringKV("container.id", "container-1")})
 	actual := provenance(span, resource)
-	if len(actual.Missing) != 0 || actual.Runtime != "python:3.13" || actual.ContainerID != "container-1" || actual.DependencyLock["uv.lock"] != "sha256:aaa" || actual.FeatureFlags["retrieval"] != "v2" || actual.EnvironmentFacts["REGION"] != "sha256:region" || actual.Entrypoint == nil || !reflect.DeepEqual(actual.Entrypoint.Command, []string{"python", "agent.py"}) {
+	if len(actual.Missing) != 0 || actual.Runtime != "python:3.13" || actual.ContainerID != "container-1" || actual.DependencyLock["uv.lock"] != "sha256:aaa" || actual.FeatureFlags["retrieval"] != "v2" || actual.EnvironmentFacts["REGION"] != "sha256:region" || actual.Entrypoint == nil || !reflect.DeepEqual(actual.Entrypoint.Command, []string{"python", "agent.py"}) || actual.Entrypoint.WorkingDir != "/workspace" || actual.Entrypoint.Dockerfile != "Dockerfile.replay" || actual.Entrypoint.Timeout != 120*time.Second || actual.Entrypoint.CPULimit != 1.5 || actual.Entrypoint.MemoryLimitMB != 1024 || !reflect.DeepEqual(actual.Entrypoint.Environment, []string{"MODEL_TOKEN"}) || !actual.Entrypoint.ModelOverride {
 		t.Fatalf("complete provenance = %#v", actual)
 	}
 }

@@ -80,6 +80,9 @@ func ComputeCompleteness(capsule *types.RunCapsule) {
 		item := types.MissingItem{Code: "operations_missing", Message: "the trace contains no accepted operations"}
 		playback.State, playback.Missing = types.CompletenessIncomplete, append(playback.Missing, item)
 		diff.State, diff.Missing = types.CompletenessBlocked, append(diff.Missing, item)
+		root := types.MissingItem{Code: "root_input_missing", Message: "the replay entrypoint input was not recorded"}
+		replay.State, replay.Missing = types.CompletenessBlocked, append(replay.Missing, root)
+		bisect.State, bisect.Missing = types.CompletenessBlocked, append(bisect.Missing, root)
 	}
 	if capsule.Provenance.Entrypoint == nil {
 		item := types.MissingItem{Code: "entrypoint_missing", Message: "a registered replay entrypoint is required"}
@@ -91,8 +94,17 @@ func ComputeCompleteness(capsule *types.RunCapsule) {
 		bisect.State, bisect.Missing = types.CompletenessBlocked, append(bisect.Missing, item)
 	}
 	operations := map[string]types.Operation{}
+	boundaryOperations := map[string]bool{}
+	for _, boundary := range capsule.Boundaries {
+		boundaryOperations[boundary.OperationSpanID] = true
+	}
 	for _, operation := range capsule.Operations {
 		operations[operation.SpanID] = operation
+		if replayRelevantOperation(operation.Kind) && !boundaryOperations[operation.SpanID] {
+			item := types.MissingItem{Code: "boundary_declaration_missing", Message: "replay-relevant operation " + operation.Name + " has no declared boundary"}
+			replay.State, replay.Missing = types.CompletenessBlocked, append(replay.Missing, item)
+			bisect.State, bisect.Missing = types.CompletenessBlocked, append(bisect.Missing, item)
+		}
 		for _, content := range []struct {
 			direction string
 			ref       *types.PayloadRef
@@ -116,7 +128,11 @@ func ComputeCompleteness(capsule *types.RunCapsule) {
 			playback.State, playback.Missing = types.CompletenessIncomplete, append(playback.Missing, item)
 			diff.State, diff.Missing = types.CompletenessIncomplete, append(diff.Missing, item)
 		}
-		if operation.ParentSpanID == "" && payloadOmitted(operation.Input) {
+		if operation.ParentSpanID == "" && operation.Input == nil {
+			item := types.MissingItem{Code: "root_input_missing", Message: "the replay entrypoint input was not recorded"}
+			replay.State, replay.Missing = types.CompletenessBlocked, append(replay.Missing, item)
+			bisect.State, bisect.Missing = types.CompletenessBlocked, append(bisect.Missing, item)
+		} else if operation.ParentSpanID == "" && payloadOmitted(operation.Input) {
 			item := types.MissingItem{Code: "root_input_omitted", Message: "the replay entrypoint input was omitted: " + operation.Input.Reason}
 			replay.State, replay.Missing = types.CompletenessBlocked, append(replay.Missing, item)
 			bisect.State, bisect.Missing = types.CompletenessBlocked, append(bisect.Missing, item)
@@ -155,6 +171,18 @@ func ComputeCompleteness(capsule *types.RunCapsule) {
 			diff.State, diff.Missing = types.CompletenessIncomplete, append(diff.Missing, item)
 		}
 	}
+	for _, record := range capsule.Logs {
+		for _, content := range []*types.PayloadRef{record.Body, record.Attributes} {
+			if payloadOmitted(content) {
+				item := types.MissingItem{Code: "log_content_omitted", Message: "log evidence was omitted: " + content.Reason}
+				playback.State, playback.Missing = types.CompletenessIncomplete, append(playback.Missing, item)
+			}
+			if payloadTruncated(content) {
+				item := types.MissingItem{Code: "log_content_truncated", Message: "log evidence was truncated by capture policy"}
+				playback.State, playback.Missing = types.CompletenessIncomplete, append(playback.Missing, item)
+			}
+		}
+	}
 	for _, boundary := range capsule.Boundaries {
 		operation := operations[boundary.OperationSpanID]
 		if operation.Input == nil {
@@ -191,6 +219,15 @@ func ComputeCompleteness(capsule *types.RunCapsule) {
 		bisect.State, bisect.AmbiguityDetails = types.CompletenessBlocked, append(bisect.AmbiguityDetails, item)
 	}
 	capsule.Completeness = map[string]types.Completeness{"playback": playback, "replay": replay, "diff": diff, "bisect": bisect}
+}
+
+func replayRelevantOperation(kind string) bool {
+	switch kind {
+	case "llm", "retriever", "tool", "mcp", "api":
+		return true
+	default:
+		return false
+	}
 }
 
 func boundaryAmbiguities(boundaries []types.Boundary) []types.AmbiguityItem {

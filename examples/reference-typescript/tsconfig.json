@@ -10,5 +10,5 @@
     "noUncheckedIndexedAccess": true,
     "skipLibCheck": true
   },
-  "include": ["agent.ts"]
+  "include": ["agent.ts", "opentelemetry-sdk-trace-node.d.ts"]
 }

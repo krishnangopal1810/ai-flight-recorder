@@ -6,13 +6,100 @@ on:
       - "v*"
 
 permissions:
-  contents: write
-  packages: write
-  id-token: write
+  contents: read
 
 jobs:
-  release:
+  audit:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: flight
+          POSTGRES_USER: flight
+          POSTGRES_PASSWORD: flight-test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U flight -d flight"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Require the tag to point at main
+        run: |
+          git fetch origin '+refs/heads/*:refs/remotes/origin/*' --tags --force
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            sdk/typescript/package-lock.json
+            examples/reference-typescript/package-lock.json
+      - uses: astral-sh/setup-uv@v6
+      - run: make bootstrap
+      - run: cd web && npx playwright install --with-deps chromium
+      - name: Scan the complete Git history for secrets
+        run: ./scripts/scan-history-secrets.py
+      - name: Audit Go vulnerabilities and licenses
+        run: |
+          go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 -show verbose ./...
+          make license-check
+      - name: Audit JavaScript production dependencies
+        run: |
+          npm --prefix web audit --omit=dev --audit-level=high
+          npm --prefix sdk/typescript audit --omit=dev --audit-level=high
+          npm --prefix examples/reference-typescript audit --omit=dev --audit-level=high
+      - name: Audit Python dependencies
+        run: cd sdk/python && uv export --frozen --no-dev --all-extras --no-emit-project --format requirements-txt | uvx pip-audit@2.10.1 --strict --no-deps --disable-pip -r /dev/stdin
+      - name: Build trusted replay gateway image
+        run: docker build --tag ai-flight-recorder:local --file deploy/Dockerfile .
+      - name: Start S3-compatible contract store
+        run: |
+          docker run -d --name flight-release-minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=flight \
+            -e MINIO_ROOT_PASSWORD=flight-test-password \
+            quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z server /data
+          for attempt in $(seq 1 30); do
+            curl --fail --silent http://127.0.0.1:9000/minio/health/live && exit 0
+            sleep 1
+          done
+          docker logs flight-release-minio
+          exit 1
+      - name: Run every blocking repository gate
+        run: make verify
+        env:
+          FLIGHT_TEST_POSTGRES_URL: postgres://flight:flight-test@127.0.0.1:5432/flight?sslmode=disable
+          FLIGHT_TEST_S3_ENDPOINT: http://127.0.0.1:9000
+          FLIGHT_TEST_S3_ACCESS_KEY: flight
+          FLIGHT_TEST_S3_SECRET_KEY: flight-test-password
+          FLIGHT_REQUIRE_OCI_SECURITY: "1"
+      - name: Upload release-audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-audit-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .artifacts/harness
+            .artifacts/playwright
+          if-no-files-found: ignore
+          retention-days: 30
+
+  publish:
+    needs: audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -20,6 +107,10 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: astral-sh/setup-uv@v6
       - name: Enforce beta and stable product gates
         if: ${{ !contains(github.ref_name, '-alpha') }}
         run: python3 scripts/check-beta-gates.py
@@ -32,12 +123,66 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Sign CLI checksums
+      - name: Build and smoke Python and TypeScript SDK release assets
+        run: ./scripts/build-release-assets.sh "${GITHUB_REF_NAME}" dist
+      - name: Verify CLI archives, checksums, and SBOMs
+        run: |
+          sha256sum --check dist/checksums.txt
+          test "$(find dist -maxdepth 1 -type f -name '*.sbom.json' -size +0c | wc -l)" -ge 7
+          smoke_dir="$(mktemp -d)"
+          linux_archive=""
+          for archive in dist/*.tar.gz; do
+            case "${archive}" in
+              *[Ll]inux*[Aa]md64*|*[Ll]inux*x86_64*) linux_archive="${archive}"; break ;;
+            esac
+          done
+          test -n "${linux_archive}"
+          tar -xzf "${linux_archive}" -C "${smoke_dir}"
+          flight_binary="$(find "${smoke_dir}" -type f -name flight -perm -u+x -print -quit)"
+          test -n "${flight_binary}"
+          "${flight_binary}" --help
+          "${flight_binary}" version --json > "${smoke_dir}/version.json"
+          python3 - "${smoke_dir}/version.json" "dist/release-manifest.json" "${GITHUB_REF_NAME#v}" <<'PY'
+          import json
+          from pathlib import Path
+          import sys
+
+          cli = json.loads(Path(sys.argv[1]).read_text())
+          manifest = json.loads(Path(sys.argv[2]).read_text())
+          expected = sys.argv[3]
+          assert cli["release_version"] == expected, (cli, expected)
+          assert manifest["release_version"] == expected, (manifest, expected)
+          assert manifest["packages"] == {"cli": expected, "python": expected, "typescript": expected}
+          assert any(asset["kind"] == "cli" for asset in manifest["assets"])
+          assert any(asset["kind"] == "python_sdk" for asset in manifest["assets"])
+          assert any(asset["kind"] == "typescript_sdk" for asset in manifest["assets"])
+          PY
+      - name: Sign release checksums and upload SDK assets
         run: |
           cosign sign-blob --yes \
             --bundle dist/checksums.sigstore.json \
             dist/checksums.txt
-          gh release upload "${GITHUB_REF_NAME}" dist/checksums.sigstore.json
+          cosign verify-blob \
+            --certificate-identity "https://github.com/${GITHUB_WORKFLOW_REF}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --bundle dist/checksums.sigstore.json \
+            dist/checksums.txt
+          cosign sign-blob --yes \
+            --bundle dist/release-checksums.sigstore.json \
+            dist/release-checksums.txt
+          cosign verify-blob \
+            --certificate-identity "https://github.com/${GITHUB_WORKFLOW_REF}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --bundle dist/release-checksums.sigstore.json \
+            dist/release-checksums.txt
+          gh release upload "${GITHUB_REF_NAME}" \
+            dist/checksums.sigstore.json \
+            dist/release-checksums.txt \
+            dist/release-checksums.sigstore.json \
+            dist/release-manifest.json \
+            dist/ai-flight-recorder_*.tar.gz.sbom.json \
+            dist/ai_flight_recorder-* \
+            dist/ai-flight-recorder-sdk-*
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/setup-buildx-action@v3
@@ -46,23 +191,136 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
       - uses: docker/metadata-action@v5
-        id: metadata
+        id: service_metadata
         with:
           images: ghcr.io/${{ github.repository }}
+          flavor: latest=false
           tags: |
+            type=raw,value=${{ github.ref_name }}
             type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-      - uses: docker/build-push-action@v6
-        id: image
+      - name: Publish service image
+        uses: docker/build-push-action@v6
+        id: service_image
         with:
           context: .
           file: deploy/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ steps.metadata.outputs.tags }}
-          labels: ${{ steps.metadata.outputs.labels }}
-      - name: Sign service image
-        run: cosign sign --yes "ghcr.io/${GITHUB_REPOSITORY}@${IMAGE_DIGEST}"
+          tags: ${{ steps.service_metadata.outputs.tags }}
+          labels: ${{ steps.service_metadata.outputs.labels }}
+          provenance: mode=max
+          sbom: true
+
+      - uses: docker/metadata-action@v5
+        id: agent_metadata
+        with:
+          images: ghcr.io/${{ github.repository }}-demo-agent
+          flavor: latest=false
+          tags: |
+            type=raw,value=${{ github.ref_name }}
+            type=semver,pattern={{version}}
+      - name: Publish real refund-agent image
+        uses: docker/build-push-action@v6
+        id: agent_image
+        with:
+          context: .
+          file: examples/investigation-agent/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.agent_metadata.outputs.tags }}
+          labels: ${{ steps.agent_metadata.outputs.labels }}
+          provenance: mode=max
+          sbom: true
+
+      - uses: docker/metadata-action@v5
+        id: demo_metadata
+        with:
+          images: ghcr.io/${{ github.repository }}-demo
+          flavor: latest=false
+          tags: |
+            type=raw,value=${{ github.ref_name }}
+            type=semver,pattern={{version}}
+      - name: Publish Docker-only demo launcher
+        uses: docker/build-push-action@v6
+        id: demo_image
+        with:
+          context: .
+          file: deploy/demo/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.demo_metadata.outputs.tags }}
+          labels: ${{ steps.demo_metadata.outputs.labels }}
+          build-args: |
+            DEMO_VERSION=${{ github.ref_name }}
+            DEMO_REPOSITORY=ghcr.io/${{ github.repository }}
+          provenance: mode=max
+          sbom: true
+
+      - name: Sign all published images by digest
+        run: |
+          cosign sign --yes "ghcr.io/${GITHUB_REPOSITORY}@${SERVICE_DIGEST}"
+          cosign sign --yes "ghcr.io/${GITHUB_REPOSITORY}-demo-agent@${AGENT_DIGEST}"
+          cosign sign --yes "ghcr.io/${GITHUB_REPOSITORY}-demo@${DEMO_DIGEST}"
+          for image in \
+            "ghcr.io/${GITHUB_REPOSITORY}@${SERVICE_DIGEST}" \
+            "ghcr.io/${GITHUB_REPOSITORY}-demo-agent@${AGENT_DIGEST}" \
+            "ghcr.io/${GITHUB_REPOSITORY}-demo@${DEMO_DIGEST}"; do
+            cosign verify \
+              --certificate-identity "https://github.com/${GITHUB_WORKFLOW_REF}" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              "${image}"
+          done
         env:
-          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          SERVICE_DIGEST: ${{ steps.service_image.outputs.digest }}
+          AGENT_DIGEST: ${{ steps.agent_image.outputs.digest }}
+          DEMO_DIGEST: ${{ steps.demo_image.outputs.digest }}
+
+      - name: Smoke the published Docker-only investigation
+        run: |
+          cleanup() {
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+              "ghcr.io/${GITHUB_REPOSITORY}-demo@${DEMO_DIGEST}" stop --purge >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          docker run --rm --entrypoint /flight "ghcr.io/${GITHUB_REPOSITORY}@${SERVICE_DIGEST}" --help
+          docker run --rm "ghcr.io/${GITHUB_REPOSITORY}-demo@${DEMO_DIGEST}" --help
+          docker run --rm \
+            -e "AFR_DEMO_VERSION=${GITHUB_REF_NAME}" \
+            -e "AFR_DEMO_REPOSITORY=ghcr.io/${GITHUB_REPOSITORY}" \
+            -e "AFR_DEMO_SERVICE_IMAGE=ghcr.io/${GITHUB_REPOSITORY}@${SERVICE_DIGEST}" \
+            -e "AFR_DEMO_AGENT_IMAGE=ghcr.io/${GITHUB_REPOSITORY}-demo-agent@${AGENT_DIGEST}" \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            "ghcr.io/${GITHUB_REPOSITORY}-demo@${DEMO_DIGEST}" start --json > demo-result.json
+          jq -e '.recorded_outcome == "deny" and .candidate_outcome == "approve" and .first_divergence == "refund-decision → model request"' demo-result.json
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+            "ghcr.io/${GITHUB_REPOSITORY}-demo@${DEMO_DIGEST}" status --json > demo-status.json
+          jq -e '.status == "ready" and .running == true' demo-status.json
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+            "ghcr.io/${GITHUB_REPOSITORY}-demo@${DEMO_DIGEST}" stop --purge
+          trap - EXIT
+        env:
+          SERVICE_DIGEST: ${{ steps.service_image.outputs.digest }}
+          AGENT_DIGEST: ${{ steps.agent_image.outputs.digest }}
+          DEMO_DIGEST: ${{ steps.demo_image.outputs.digest }}
+
+      - name: Attach image identities to the release
+        run: |
+          jq -n \
+            --arg service "ghcr.io/${GITHUB_REPOSITORY}@${SERVICE_DIGEST}" \
+            --arg demo_agent "ghcr.io/${GITHUB_REPOSITORY}-demo-agent@${AGENT_DIGEST}" \
+            --arg demo "ghcr.io/${GITHUB_REPOSITORY}-demo@${DEMO_DIGEST}" \
+            '{service:$service,demo_agent:$demo_agent,demo:$demo}' > image-identities.json
+          jq '.token = "[redacted: ephemeral CI stack was purged]"' demo-result.json > demo-result.redacted.json
+          gh release upload "${GITHUB_REF_NAME}" image-identities.json demo-result.redacted.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SERVICE_DIGEST: ${{ steps.service_image.outputs.digest }}
+          AGENT_DIGEST: ${{ steps.agent_image.outputs.digest }}
+          DEMO_DIGEST: ${{ steps.demo_image.outputs.digest }}
+
+      - name: Publish the verified release
+        run: gh release edit "${GITHUB_REF_NAME}" --draft=false
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

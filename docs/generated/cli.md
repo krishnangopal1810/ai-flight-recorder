@@ -188,18 +188,18 @@ flight evaluator validate <definition.yaml>
 
 ## `flight help`
 
-Generate help artifacts
-
-```text
-flight help [flags]
-```
-
-## `flight help`
-
 Help about any command
 
 ```text
 flight help [command]
+```
+
+## `flight help`
+
+Generate help artifacts
+
+```text
+flight help [flags]
 ```
 
 ## `flight help markdown`
@@ -215,7 +215,7 @@ flight help markdown [flags]
 Create a safe replay application definition
 
 ```text
-flight init [flags]
+flight init --project <id> [flags] -- <container-entrypoint argv...>
 ```
 
 ## `flight playback`
@@ -231,7 +231,7 @@ flight playback <capsule-id>
 Run an application with Flight capture enabled
 
 ```text
-flight record -- <application command>
+flight record [flags] -- <application command>
 ```
 
 ## `flight replay`
@@ -288,4 +288,12 @@ Revoke a token by its non-secret ID
 
 ```text
 flight token revoke <token-id>
+```
+
+## `flight version`
+
+Show CLI, release, and schema versions
+
+```text
+flight version
 ```

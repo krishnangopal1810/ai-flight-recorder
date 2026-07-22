@@ -96,13 +96,16 @@ func (r *HostedRepository) migrate(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS audit_events (sequence BIGSERIAL PRIMARY KEY, kind TEXT NOT NULL, safe_metadata JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS evaluators (capsule_id TEXT NOT NULL REFERENCES capsules(id) ON DELETE CASCADE, evaluator_id TEXT NOT NULL, version TEXT NOT NULL, definition JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL, PRIMARY KEY(capsule_id,evaluator_id,version))`,
 		`CREATE TABLE IF NOT EXISTS evaluator_runs (id TEXT PRIMARY KEY, definition_id TEXT NOT NULL, definition_version TEXT NOT NULL, baseline_capsule_id TEXT NOT NULL REFERENCES capsules(id), candidate_capsule_id TEXT NOT NULL REFERENCES capsules(id), outcome TEXT NOT NULL, result JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS staged_trace_logs (project_id TEXT NOT NULL, trace_id TEXT NOT NULL, log_id TEXT NOT NULL, data JSONB NOT NULL, expires_at TIMESTAMPTZ NOT NULL, PRIMARY KEY(project_id,trace_id,log_id))`,
+		`CREATE INDEX IF NOT EXISTS staged_trace_logs_expiry ON staged_trace_logs(expires_at)`,
+		`CREATE TABLE IF NOT EXISTS trace_log_seals (project_id TEXT NOT NULL, trace_id TEXT NOT NULL, expires_at TIMESTAMPTZ NOT NULL, PRIMARY KEY(project_id,trace_id))`,
 	}
 	for _, statement := range statements {
 		if _, err := r.db.Exec(ctx, statement); err != nil {
 			return types.NewError(types.ErrStorage, "cannot migrate PostgreSQL", "restore a backup or correct the migration before accepting traffic", err)
 		}
 	}
-	if _, err := r.db.Exec(ctx, `INSERT INTO schema_migrations(version,applied_at) VALUES(1,$1) ON CONFLICT(version) DO NOTHING`, time.Now().UTC()); err != nil {
+	if _, err := r.db.Exec(ctx, `INSERT INTO schema_migrations(version,applied_at) VALUES(2,$1) ON CONFLICT(version) DO NOTHING`, time.Now().UTC()); err != nil {
 		return types.NewError(types.ErrStorage, "cannot record PostgreSQL schema version", "restore a backup and inspect migration state", err)
 	}
 	return nil

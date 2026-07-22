@@ -1,0 +1,26 @@
+{
+  "name": "ai-flight-recorder",
+  "version": "1.0.0",
+  "description": "<p align=\"center\">   <picture>     <source media=\"(prefers-color-scheme: dark)\" srcset=\"docs/assets/brand/mark-on-dark.svg\">     <img src=\"docs/assets/brand/mark-on-light.svg\" width=\"72\" height=\"72\" alt=\"AI Flight Recorder\">   </picture> </p>",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "example": "examples",
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/krishnangopal1810/ai-flight-recorder.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/krishnangopal1810/ai-flight-recorder/issues"
+  },
+  "homepage": "https://github.com/krishnangopal1810/ai-flight-recorder#readme"
+}

@@ -1,0 +1,39 @@
+name: Incident story
+description: Share a sanitized agent failure pattern that should shape capture, replay, or comparison.
+title: "[Incident]: "
+labels: [incident-story, needs-triage]
+body:
+  - type: markdown
+    attributes:
+      value: Tell us the shape of the failure, not the private payload. Concrete incident patterns drive the roadmap.
+  - type: textarea
+    id: outcome
+    attributes:
+      label: What did the agent do?
+      placeholder: The agent should have…, but instead…
+    validations:
+      required: true
+  - type: textarea
+    id: moving_world
+    attributes:
+      label: What had moved by investigation time?
+      placeholder: Prompt, model, retrieval index, tool, MCP server, API, flag, code…
+    validations:
+      required: true
+  - type: textarea
+    id: missing_evidence
+    attributes:
+      label: What evidence would have made it reproducible?
+    validations:
+      required: true
+  - type: textarea
+    id: current_workflow
+    attributes:
+      label: How do you investigate this today?
+  - type: checkboxes
+    id: sanitization
+    attributes:
+      label: Sanitization
+      options:
+        - label: This story contains no secret, customer content, production identifier, or private capsule payload.
+          required: true

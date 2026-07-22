@@ -91,6 +91,62 @@ func exerciseRepositoryContract(t *testing.T, repo Repository, prefix string) {
 	}
 	exerciseRetentionContract(t, repo, prefix)
 	exerciseConcurrentRetentionContract(t, repo, prefix)
+	exerciseLogStagingContract(t, repo, prefix)
+}
+
+func exerciseLogStagingContract(t *testing.T, repo Repository, prefix string) {
+	t.Helper()
+	ctx := context.Background()
+	now := time.Now().UTC()
+	projectID, traceID := prefix+"-log-project", prefix+"-log-trace"
+	first := StagedLog{
+		ProjectID: projectID, TraceID: traceID,
+		Record:   types.LogRecord{ID: prefix + "-log-1", Timestamp: now, SeverityText: "INFO"},
+		Payloads: map[string][]byte{}, ExpiresAt: now.Add(time.Hour),
+	}
+	for range 2 {
+		if err := repo.StageLog(ctx, first); err != nil {
+			t.Fatalf("idempotent log stage: %v", err)
+		}
+	}
+	sealed, err := repo.SealLogs(ctx, projectID, traceID, now)
+	if err != nil || len(sealed) != 1 || sealed[0].Record.ID != first.Record.ID {
+		t.Fatalf("sealed logs=%#v err=%v", sealed, err)
+	}
+	second := first
+	second.Record.ID = prefix + "-log-2"
+	if err := repo.StageLog(ctx, second); !errors.Is(err, ErrTraceLogsSealed) {
+		t.Fatalf("late staged log was accepted: %v", err)
+	}
+	if err := repo.ReleaseLogs(ctx, projectID, traceID); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.StageLog(ctx, second); err != nil {
+		t.Fatalf("released trace did not accept logs: %v", err)
+	}
+	sealed, err = repo.SealLogs(ctx, projectID, traceID, now)
+	if err != nil || len(sealed) != 2 {
+		t.Fatalf("resealed logs=%#v err=%v", sealed, err)
+	}
+	capsule := types.RunCapsule{SchemaVersion: types.SchemaVersion, CapsuleID: prefix + "-log-capsule", TraceID: traceID, ProjectID: projectID, ServiceName: "log-agent", StartTime: now, EndTime: now, TerminalStatus: "ok"}
+	if err := repo.PutCapsule(ctx, capsule, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CompleteLogs(ctx, projectID, traceID); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.StageLog(ctx, second); !errors.Is(err, ErrTraceLogsSealed) {
+		t.Fatalf("completed trace accepted a late log: %v", err)
+	}
+	orphan := first
+	orphan.ProjectID, orphan.TraceID, orphan.Record.ID = prefix+"-orphan-project", prefix+"-orphan-trace", prefix+"-orphan-log"
+	orphan.ExpiresAt = now.Add(-time.Second)
+	if err := repo.StageLog(ctx, orphan); err != nil {
+		t.Fatal(err)
+	}
+	if expired, err := repo.DeleteExpiredLogs(ctx, now); err != nil || expired != 1 {
+		t.Fatalf("expired staged logs=%d err=%v", expired, err)
+	}
 }
 
 func exerciseRetentionContract(t *testing.T, repo Repository, prefix string) {

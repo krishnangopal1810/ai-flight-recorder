@@ -5,17 +5,18 @@ import "fmt"
 type ErrorCode string
 
 const (
-	ErrValidation        ErrorCode = "validation"
-	ErrIncompleteCapsule ErrorCode = "incomplete_capsule"
-	ErrUnmatchedBoundary ErrorCode = "unmatched_boundary"
-	ErrUnsafeReplay      ErrorCode = "unsafe_replay"
-	ErrAuthentication    ErrorCode = "authentication"
-	ErrStorage           ErrorCode = "storage"
-	ErrBuild             ErrorCode = "build"
-	ErrEvaluator         ErrorCode = "evaluator"
-	ErrInconclusive      ErrorCode = "inconclusive"
-	ErrNotFound          ErrorCode = "not_found"
-	ErrConflict          ErrorCode = "conflict"
+	ErrValidation         ErrorCode = "validation"
+	ErrIncompleteCapsule  ErrorCode = "incomplete_capsule"
+	ErrUnmatchedBoundary  ErrorCode = "unmatched_boundary"
+	ErrOverrideNotApplied ErrorCode = "override_not_applied"
+	ErrUnsafeReplay       ErrorCode = "unsafe_replay"
+	ErrAuthentication     ErrorCode = "authentication"
+	ErrStorage            ErrorCode = "storage"
+	ErrBuild              ErrorCode = "build"
+	ErrEvaluator          ErrorCode = "evaluator"
+	ErrInconclusive       ErrorCode = "inconclusive"
+	ErrNotFound           ErrorCode = "not_found"
+	ErrConflict           ErrorCode = "conflict"
 )
 
 type FlightError struct {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/krishnangopal1810/ai-flight-recorder/internal/runtime/access"
 	"github.com/krishnangopal1810/ai-flight-recorder/internal/types"
+	flightversion "github.com/krishnangopal1810/ai-flight-recorder/internal/version"
 )
 
 func (s *Server) hydrateDiffValues(ctx context.Context, result *types.DiffResult) {
@@ -48,6 +49,7 @@ func (s *Server) session(writer http.ResponseWriter, request *http.Request) {
 	info := types.SessionInfo{
 		SchemaVersion:      types.SchemaVersion,
 		ServiceVersion:     types.SchemaVersion,
+		ReleaseVersion:     flightversion.Release,
 		AuthMode:           "token",
 		LocalModeAvailable: s.config.Auth.LocalBypass,
 		Scopes:             []string{},

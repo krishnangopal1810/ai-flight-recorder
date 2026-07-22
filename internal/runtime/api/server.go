@@ -1,7 +1,6 @@
 package api
 
 import (
-	"compress/gzip"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -9,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -62,6 +60,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/capsules/{id}/export", s.withScope("read", s.exportCapsule))
 	mux.HandleFunc("POST /api/v1/capsules/import", s.withScope("ingest", s.importCapsule))
 	mux.HandleFunc("POST /api/v1/diffs", s.withScope("read", s.diffCapsules))
+	mux.HandleFunc("POST /api/v1/replays/preflight", s.withScope("replay", s.preflightReplay))
 	mux.HandleFunc("POST /api/v1/replays", s.withScope("replay", s.createReplay))
 	mux.HandleFunc("POST /api/v1/bisects", s.withScope("replay", s.bisect))
 	mux.HandleFunc("POST /api/v1/evaluators/validate", s.withScope("replay", s.validateEvaluator))
@@ -75,6 +74,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/v1/tokens/{id}", s.withScope("admin", s.revokeToken))
 	mux.HandleFunc("GET /api/v1/audit-events", s.withScope("admin", s.auditEvents))
 	mux.HandleFunc("POST /v1/traces", s.withScope("ingest", s.otlpHTTP))
+	mux.HandleFunc("POST /v1/logs", s.withScope("ingest", s.otlpLogsHTTP))
 	if info, err := os.Stat(s.config.Server.WebDir); err == nil && info.IsDir() {
 		mux.Handle("/", inspectorHandler(s.config.Server.WebDir))
 	}
@@ -116,7 +116,8 @@ func (s *Server) health(writer http.ResponseWriter, _ *http.Request) {
 }
 func (s *Server) metrics(writer http.ResponseWriter, _ *http.Request) {
 	writer.Header().Set("Content-Type", "text/plain; version=0.0.4")
-	_, _ = fmt.Fprintf(writer, "flight_otlp_accepted_spans_total %d\nflight_otlp_rejected_spans_total %d\n", s.accepted.Load(), s.rejected.Load())
+	logs := s.receiver.LogStats()
+	_, _ = fmt.Fprintf(writer, "flight_otlp_accepted_spans_total %d\nflight_otlp_rejected_spans_total %d\nflight_otlp_accepted_logs_total %d\nflight_otlp_rejected_logs_total %d\nflight_otlp_orphaned_logs_total %d\n", s.accepted.Load(), s.rejected.Load(), logs.Accepted, logs.Rejected, logs.Orphaned)
 }
 
 func (s *Server) listCapsules(writer http.ResponseWriter, request *http.Request) {
@@ -234,12 +235,12 @@ func (s *Server) diffCapsules(writer http.ResponseWriter, request *http.Request)
 		writeError(writer, err)
 		return
 	}
-	baseline, err := s.capsules.Get(request.Context(), body.Baseline, true)
+	baseline, err := s.capsules.GetWithoutLogs(request.Context(), body.Baseline)
 	if err != nil {
 		writeError(writer, err)
 		return
 	}
-	candidate, err := s.capsules.Get(request.Context(), body.Candidate, true)
+	candidate, err := s.capsules.GetWithoutLogs(request.Context(), body.Candidate)
 	if err != nil {
 		writeError(writer, err)
 		return
@@ -282,20 +283,6 @@ func (s *Server) auditEvents(writer http.ResponseWriter, request *http.Request) 
 		return
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{"items": events})
-}
-
-func (s *Server) createReplay(writer http.ResponseWriter, request *http.Request) {
-	var body types.CreateReplayRequest
-	if err := decodeJSON(request, &body); err != nil {
-		writeError(writer, err)
-		return
-	}
-	job, err := s.replays.Create(request.Context(), body)
-	if err != nil {
-		writeError(writer, err)
-		return
-	}
-	writeJSON(writer, http.StatusAccepted, job)
 }
 
 func (s *Server) bisect(writer http.ResponseWriter, request *http.Request) {
@@ -438,25 +425,9 @@ func (s *Server) jobEvents(writer http.ResponseWriter, request *http.Request) {
 }
 
 func (s *Server) otlpHTTP(writer http.ResponseWriter, request *http.Request) {
-	mediaType, _, _ := mime.ParseMediaType(request.Header.Get("Content-Type"))
-	jsonEncoding := mediaType == "application/json"
-	if mediaType != "application/x-protobuf" && mediaType != "application/protobuf" && !jsonEncoding {
-		writeError(writer, types.NewError(types.ErrValidation, "OTLP HTTP content type is unsupported", "send application/x-protobuf or application/json", nil))
-		return
-	}
-	var body io.Reader = http.MaxBytesReader(writer, request.Body, 64<<20)
-	if strings.EqualFold(request.Header.Get("Content-Encoding"), "gzip") {
-		compressed, err := gzip.NewReader(body)
-		if err != nil {
-			writeError(writer, types.NewError(types.ErrValidation, "invalid OTLP gzip body", "send a valid gzip stream", err))
-			return
-		}
-		defer compressed.Close()
-		body = io.LimitReader(compressed, 64<<20)
-	}
-	data, err := io.ReadAll(body)
+	data, jsonEncoding, err := readOTLPRequest(writer, request)
 	if err != nil {
-		writeError(writer, types.NewError(types.ErrValidation, "cannot read OTLP request", "reduce the batch size", err))
+		writeError(writer, err)
 		return
 	}
 	var exportRequest collectortrace.ExportTraceServiceRequest

@@ -5,6 +5,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"time"
 
 	commonv1 "go.opentelemetry.io/proto/otlp/common/v1"
 
@@ -88,13 +89,44 @@ func provenance(span, resource map[string]*commonv1.AnyValue) types.Provenance {
 		if err := json.Unmarshal([]byte(command), &argv); err != nil || len(argv) == 0 {
 			provenance.Missing = append(provenance.Missing, "entrypoint_command_invalid")
 		} else {
-			modelHosts := []string{}
-			if encoded := read("flight.entrypoint.model_hosts"); encoded != "" {
-				if err := json.Unmarshal([]byte(encoded), &modelHosts); err != nil {
-					provenance.Missing = append(provenance.Missing, "entrypoint_model_hosts_invalid")
+			decodeStrings := func(attribute, missing string) []string {
+				values := []string{}
+				if encoded := read(attribute); encoded != "" {
+					if err := json.Unmarshal([]byte(encoded), &values); err != nil {
+						provenance.Missing = append(provenance.Missing, missing)
+						return nil
+					}
 				}
+				return values
 			}
-			provenance.Entrypoint = &types.Entrypoint{Command: argv, Image: read("flight.entrypoint.image"), InputMode: defaultString(read("flight.entrypoint.input_mode"), "stdin_json"), OutputMode: defaultString(read("flight.entrypoint.output_mode"), "stdout_json"), ModelHosts: modelHosts}
+			timeout, timeoutErr := strconv.ParseInt(defaultString(read("flight.entrypoint.timeout_ns"), "0"), 10, 64)
+			cpuLimit, cpuErr := strconv.ParseFloat(defaultString(read("flight.entrypoint.cpu_limit"), "0"), 64)
+			memoryLimit, memoryErr := strconv.ParseInt(defaultString(read("flight.entrypoint.memory_limit_mb"), "0"), 10, 64)
+			modelOverride, modelOverrideErr := strconv.ParseBool(defaultString(read("flight.entrypoint.model_override"), "false"))
+			if timeoutErr != nil || timeout < 0 {
+				provenance.Missing = append(provenance.Missing, "entrypoint_timeout_invalid")
+				timeout = 0
+			}
+			if cpuErr != nil || cpuLimit < 0 {
+				provenance.Missing = append(provenance.Missing, "entrypoint_cpu_limit_invalid")
+				cpuLimit = 0
+			}
+			if memoryErr != nil || memoryLimit < 0 {
+				provenance.Missing = append(provenance.Missing, "entrypoint_memory_limit_invalid")
+				memoryLimit = 0
+			}
+			if modelOverrideErr != nil {
+				provenance.Missing = append(provenance.Missing, "entrypoint_model_override_invalid")
+				modelOverride = false
+			}
+			provenance.Entrypoint = &types.Entrypoint{
+				Command: argv, WorkingDir: read("flight.entrypoint.working_dir"), Image: read("flight.entrypoint.image"),
+				Dockerfile: read("flight.entrypoint.dockerfile"), Context: read("flight.entrypoint.context"),
+				InputMode: defaultString(read("flight.entrypoint.input_mode"), "stdin_json"), OutputMode: defaultString(read("flight.entrypoint.output_mode"), "stdout_json"),
+				Timeout: time.Duration(timeout), Environment: decodeStrings("flight.entrypoint.environment", "entrypoint_environment_invalid"),
+				ModelHosts: decodeStrings("flight.entrypoint.model_hosts", "entrypoint_model_hosts_invalid"), ModelOverride: modelOverride,
+				CPULimit: cpuLimit, MemoryLimitMB: memoryLimit,
+			}
 		}
 	}
 	if provenance.RepositoryURL == "" && provenance.ProjectID == "" {

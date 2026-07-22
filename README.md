@@ -14,7 +14,7 @@
 <p align="center"><sub>Open-source causal regression debugging for production, tool-using AI agents.</sub></p>
 
 <p align="center">
-  <a href="https://github.com/krishnangopal1810/ai-flight-recorder/releases/tag/v0.1.0-alpha.1"><img alt="Public alpha" src="https://img.shields.io/badge/status-public_alpha-f4b942?style=flat-square"></a>
+  <a href="docs/launch/audit-report-v0.1.0-alpha.1.md"><img alt="Alpha preview; publication gated" src="https://img.shields.io/badge/status-alpha_preview-f4b942?style=flat-square"></a>
   <a href="https://github.com/krishnangopal1810/ai-flight-recorder/actions/workflows/verify.yml"><img alt="Verification status" src="https://img.shields.io/github/actions/workflow/status/krishnangopal1810/ai-flight-recorder/verify.yml?branch=main&amp;style=flat-square&amp;label=verify"></a>
   <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-16784a?style=flat-square"></a>
   <a href="https://opentelemetry.io/"><img alt="OpenTelemetry OTLP" src="https://img.shields.io/badge/OpenTelemetry-OTLP-6a5acd?style=flat-square"></a>
@@ -156,52 +156,78 @@ Standard OTLP/OpenInference spans are the front door. They already let Flight Re
 
 The replay hooks belong at the edges of the application—your model client, repository, tool adapter, or MCP client—not throughout the agent's business logic.
 
+### 0 · Install one matching release
+
+The CLI and both SDKs are attached to the same GitHub release. The public alpha does not require PyPI, the npm registry, or Homebrew.
+
+```sh
+VERSION=0.1.0-alpha.1
+OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+case $(uname -m) in x86_64) ARCH=amd64 ;; arm64|aarch64) ARCH=arm64 ;; *) exit 1 ;; esac
+ARCHIVE="ai-flight-recorder_${VERSION}_${OS}_${ARCH}.tar.gz"
+curl -fLO "https://github.com/krishnangopal1810/ai-flight-recorder/releases/download/v${VERSION}/${ARCHIVE}"
+curl -fLO "https://github.com/krishnangopal1810/ai-flight-recorder/releases/download/v${VERSION}/checksums.txt"
+grep "  ${ARCHIVE}$" checksums.txt | shasum -a 256 -c -
+tar -xzf "${ARCHIVE}"
+sudo install flight /usr/local/bin/flight
+flight version --json
+```
+
+Install the SDK for the same tag:
+
+```sh
+# Python
+PYTHON_SDK=ai_flight_recorder-0.1.0a1-py3-none-any.whl
+curl -fLO "https://github.com/krishnangopal1810/ai-flight-recorder/releases/download/v${VERSION}/${PYTHON_SDK}"
+curl -fLO "https://github.com/krishnangopal1810/ai-flight-recorder/releases/download/v${VERSION}/release-checksums.txt"
+grep "  ${PYTHON_SDK}$" release-checksums.txt | shasum -a 256 -c -
+pip install "./${PYTHON_SDK}"
+
+# TypeScript
+TYPESCRIPT_SDK=ai-flight-recorder-sdk-${VERSION}.tgz
+curl -fLO "https://github.com/krishnangopal1810/ai-flight-recorder/releases/download/v${VERSION}/${TYPESCRIPT_SDK}"
+grep "  ${TYPESCRIPT_SDK}$" release-checksums.txt | shasum -a 256 -c -
+npm install "./${TYPESCRIPT_SDK}"
+```
+
+Upgrade by repeating these commands with the new release version. Uninstall with `sudo rm /usr/local/bin/flight`, `pip uninstall ai-flight-recorder`, or `npm uninstall @ai-flight-recorder/sdk` as applicable. Development builds use `make bootstrap`, `go build -o ./bin/flight ./cmd/flight`, and editable/local SDK installs instead.
+
 ### 1 · Capture the run you already have
 
 ```sh
-export OTEL_RESOURCE_ATTRIBUTES='service.name=my-agent,flight.project.id=my-project,flight.capture=true'
 export FLIGHT_TOKEN='frt_...'
-flight --url http://127.0.0.1:7777 --token "$FLIGHT_TOKEN" record -- python app.py
+flight --url http://127.0.0.1:7777 --token "$FLIGHT_TOKEN" record --project my-project -- python app.py
 ```
 
-That is enough to bring compatible telemetry through the front door. To make the run executable later, give Flight Recorder a restart button.
+`flight record` merges the capture and project markers into existing OpenTelemetry resource attributes. This fast path is inspect-only. To make the run executable later, give Flight Recorder a restart button.
 
 ### 2 · Give Flight Recorder a restart button
 
 A replay does not resume an old process. It starts a fresh copy of the agent from an immutable OCI image, sends the recorded root input to `stdin`, and runs the registered command from the beginning.
 
-Build the same code and dependencies that handled the request, then capture the immutable local image ID:
+Generate the replay definition without guessing the application language or command:
 
 ```sh
-docker build -t my-agent:recording .
-export FLIGHT_REPLAY_IMAGE="$(docker image inspect --format '{{.Id}}' my-agent:recording)"
+flight init --project my-project -- python /app/agent.py
+flight --url http://127.0.0.1:7777 --token "$FLIGHT_TOKEN" record --replay-ready -- python app.py
 ```
+
+`--replay-ready` validates a configured immutable image or builds the declared Dockerfile and context before the agent starts. It exports the resolved entrypoint to the SDK. A deployed agent instead records the exact `sha256:` image ID used by its deployment; mutable tags are rejected.
 
 Call the metadata helpers while the agent's root span is active:
 
 ```python
-import os
-
 from flight_recorder import register_entrypoint, set_run_provenance
 
-set_run_provenance(
-    project_id="my-project",
-    repository_url="https://github.com/acme/my-agent",
-    commit_sha=os.environ.get("GIT_COMMIT"),
-)
-
-register_entrypoint(
-    ["python", "/app/agent.py"],
-    image=os.environ["FLIGHT_REPLAY_IMAGE"],
-    model_hosts=["api.openai.com"],
-)
+set_run_provenance()
+register_entrypoint()
 ```
 
 - `command` is the argv Flight Recorder starts inside the image. The path must exist in that image.
 - `image` freezes the agent code, runtime, system libraries, and installed packages—not just the source revision.
 - `model_hosts` is a hostname allowlist for model calls intentionally run live. It contains no URLs, paths, or credentials.
 
-`register_entrypoint()` records this recipe; it does not build, upload, or validate the image. A raw `sha256:…` image ID works when recording and replay share the same Docker or Podman image store. A remote replay worker needs a pullable, immutable registry reference such as `ghcr.io/acme/my-agent@sha256:…`. The capsule stores that reference, never the image layers or credential values.
+Explicit arguments remain supported when the application is not started through `flight record`. The capsule stores the entrypoint and credential names, never image layers or credential values.
 
 ### 3 · Freeze the outside world
 
@@ -338,6 +364,27 @@ const answer = await boundary(
 
 </details>
 
+### Use OpenAI or LangChain directly
+
+Applications using the official OpenAI SDK or LangChain do not need to rewrite each call as a generic boundary. Install `ai-flight-recorder[integrations]` in Python or the optional `openai` and `@langchain/core` peers in TypeScript, then explicitly wrap the clients or components:
+
+```python
+from openai import OpenAI
+from flight_recorder import record_run, wrap_chat_model, wrap_openai, wrap_tool
+
+openai = wrap_openai(OpenAI())
+model = wrap_chat_model(existing_langchain_model, "agent.model")
+search = wrap_tool(existing_search_tool, "agent.search", side_effect="read_only")
+
+result = record_run(
+    "agent.answer",
+    {"question": "What changed?"},
+    lambda request: openai.responses.create(model="gpt-5", input=request["question"]),
+)
+```
+
+The wrappers cover typed responses, structured outputs, and ordered streams while preserving fail-closed replay. They are opt-in and never monkey-patch a framework or replace an existing OpenTelemetry provider. See the [full SDK integration contract](docs/SDK.md#official-openai-and-langchain-integrations).
+
 ### Life of a replay
 
 ```mermaid
@@ -362,7 +409,7 @@ The replay worker reads the original root input, starts the registered image as 
 
 That is the payoff: no production database is needed for substituted reads, stubbed callbacks are not invoked, and one recorded value can change while the rest of the dependency world stays frozen. The candidate telemetry becomes a new capsule, aligned against the original to reveal the first meaningful divergence.
 
-The alpha CLI archives are release artifacts. Python and TypeScript SDKs are source-installed for now; PyPI, npm, and Homebrew distribution will follow onboarding feedback. See the [SDK contract](docs/SDK.md) and [reference agents](examples/).
+The alpha CLI archives, Python wheel/source distribution, and TypeScript tarball are coordinated GitHub Release artifacts. PyPI, the npm registry, and Homebrew remain deferred. See the [SDK contract](docs/SDK.md) and [reference agents](examples/).
 
 ## What never happens during replay?
 
