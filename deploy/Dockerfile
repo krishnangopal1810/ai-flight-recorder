@@ -17,7 +17,7 @@ RUN npm ci
 COPY web ./
 RUN npm run build
 
-FROM docker:28-cli AS docker-cli
+FROM docker:29-cli AS docker-cli
 
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=go-build /out/flight /flight
