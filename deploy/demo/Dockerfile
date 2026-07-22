@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-FROM docker:28-cli
+FROM docker:29-cli
 
 RUN apk add --no-cache bash jq
 
