@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 FROM ghcr.io/astral-sh/uv:0.7.13 AS uv
 
-FROM python:3.13-slim-bookworm
+FROM python:3.14-slim-bookworm
 COPY --from=uv /uv /usr/local/bin/uv
 WORKDIR /sdk
 COPY sdk/python/pyproject.toml sdk/python/uv.lock ./
