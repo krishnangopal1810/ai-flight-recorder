@@ -1,50 +1,415 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/brand/mark-on-dark.svg">
+    <img src="docs/assets/brand/mark-on-light.svg" width="72" height="72" alt="AI Flight Recorder">
+  </picture>
+</p>
+
 <h1 align="center">AI Flight Recorder</h1>
 
-<h3 align="center">Reproduce the run. Freeze the world. Find the first divergence.</h3>
+<h2 align="center">Your agent failed in production. The world has already moved.</h2>
 
-<p align="center"><strong>An open-source causal regression debugger for production AI agents.</strong><br />Turn one failed execution into a portable experiment: capture the evidence, replay it with external boundaries frozen, change one variable, and see exactly where the new path splits.</p>
+<p align="center"><strong>AI Flight Recorder turns one broken run into a controlled experiment.</strong><br>Freeze recorded tools and APIs. Change one value. Replay in isolation. See exactly where the new execution splits.</p>
 
-<p align="center">
-  <a href="https://github.com/krishnangopal1810/ai-flight-recorder/actions/workflows/verify.yml"><img alt="Verification status" src="https://img.shields.io/github/actions/workflow/status/krishnangopal1810/ai-flight-recorder/verify.yml?branch=main&amp;style=flat-square&amp;label=verify" /></a>
-  <a href="https://github.com/krishnangopal1810/ai-flight-recorder/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/krishnangopal1810/ai-flight-recorder?style=flat-square" /></a>
-  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-0f6b45?style=flat-square" /></a>
-  <a href="https://opentelemetry.io/"><img alt="OpenTelemetry OTLP" src="https://img.shields.io/badge/OpenTelemetry-OTLP-6a5acd?style=flat-square" /></a>
-</p>
+<p align="center"><sub>Open-source causal regression debugging for production, tool-using AI agents.</sub></p>
 
 <p align="center">
-  <a href="#see-it-in-action">Try the real investigation</a> ·
-  <a href="#how-it-works">How it works</a> ·
-  <a href="#more-than-another-trace-viewer">Why it is different</a> ·
-  <a href="#safe-by-construction">Safety model</a> ·
-  <a href="#documentation">Documentation</a>
+  <a href="https://github.com/krishnangopal1810/ai-flight-recorder/releases/tag/v0.1.0-alpha.1"><img alt="Public alpha" src="https://img.shields.io/badge/status-public_alpha-f4b942?style=flat-square"></a>
+  <a href="https://github.com/krishnangopal1810/ai-flight-recorder/actions/workflows/verify.yml"><img alt="Verification status" src="https://img.shields.io/github/actions/workflow/status/krishnangopal1810/ai-flight-recorder/verify.yml?branch=main&amp;style=flat-square&amp;label=verify"></a>
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-16784a?style=flat-square"></a>
+  <a href="https://opentelemetry.io/"><img alt="OpenTelemetry OTLP" src="https://img.shields.io/badge/OpenTelemetry-OTLP-6a5acd?style=flat-square"></a>
+  <a href="https://github.com/krishnangopal1810/ai-flight-recorder/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/krishnangopal1810/ai-flight-recorder?style=flat-square"></a>
 </p>
 
-![AI Flight Recorder showing the first meaningful divergence between a failed agent run and a successful controlled replay](docs/assets/inspector-comparison.png)
+<p align="center"><strong><a href="#run-the-incident">Run the broken agent →</a></strong> · <a href="#watch-the-run-split">Watch the split</a></p>
 
-<p align="center"><sub>The comparison view opens at the first aligned change: the original agent denied an eligible refund; a controlled replay changed one model input, kept recorded dependencies offline, and produced a successful candidate.</sub></p>
+<p align="center">
+  <picture>
+    <source srcset="docs/assets/readme/run-split.gif" type="image/gif">
+    <img src="docs/assets/readme/run-split.png" alt="A real failed refund-agent run opening into its controlled comparison at the first changed model request">
+  </picture>
+</p>
 
-## A trace is evidence. A replay is an experiment.
+<p align="center"><sub>A real end-to-end run: failed refund decision → recorded dependencies frozen → candidate replay → first divergence found.</sub></p>
 
-AI agents fail across moving systems: prompts, models, retrieval indexes, tools, MCP servers, feature flags, code, and mutable APIs. By the time you investigate, the world that produced the failure has already changed.
+## Watch the run split
 
-Flight Recorder captures that world as an immutable **Run Capsule**, then lets you ask a much stronger question than “what happened?”
+The refund was eligible. Retrieval returned the correct policy. The eligibility tool returned `true`. **The agent still denied it.**
 
-> **If I freeze every recorded dependency and change exactly one thing, does the failure still happen?**
+```text
+RECORDED RUN                              CONTROLLED REPLAY
+──────────────────────────────────        ──────────────────────────────────
+System: “Minimize refunds…”               System: “Follow the policy…”
+Decision: deny                            Decision: approve
+Outcome: failed                           Outcome: completed
+                    ↑
+          FIRST MEANINGFUL DIVERGENCE
+```
 
-The result is a controlled before/after execution, aligned by logical operation rather than timestamp, with the **first meaningful divergence** surfaced before its downstream effects.
+Retrieval did not change. The eligibility tool did not change. Their callbacks were rigged to fail if replay ever called them—and the replay completed. One model input changed, and Flight Recorder showed the first split before the downstream effects.
 
-## The debugging loop
+### 1 · The failure
 
-1. **Capture a failed run** — ingest OTLP/OpenInference spans plus the provenance, artifacts, boundary responses, and policy needed to investigate it.
-2. **Inspect it safely** — play back recorded evidence without running application code or contacting external systems.
-3. **Change one value** — edit a model input or a recorded model, tool, retriever, API, or MCP response.
-4. **Replay with the world frozen** — run the agent inside OCI isolation while recorded external results are substituted by default.
-5. **Find the split** — align both execution trees and surface the earliest meaningful change, followed by its later effects.
-6. **Keep the fix** — save evaluator evidence for local or CI regression testing, or run the experimental Git bisect workflow.
+![The recorded refund agent is failed and ready to replay](docs/assets/readme/01-failed-run.png)
 
-## See it in action
+An eligible refund ended in `deny`.
 
-The fastest path launches the complete stack and records a real investigation. It requires **Go 1.25+**, **Node.js 22**, [**uv**](https://docs.astral.sh/uv/), **Git**, and **Docker**.
+### 2 · The controlled experiment
+
+![The recorded and candidate paths stay aligned until the changed refund-decision model request](docs/assets/readme/02-controlled-experiment.png)
+
+Recorded retrieval and tool results stayed matched. One model request changed.
+
+### 3 · The answer
+
+![The controlled candidate no longer reproduces the incident](docs/assets/readme/03-candidate-resolved.png)
+
+The candidate reached `approve` and completed.
+
+Every frame above comes from the executable refund-agent journey retained by the repository harness. No product fixtures or invented results are used.
+
+<a id="run-the-incident"></a>
+
+## Run the incident yourself
+
+Docker is the only prerequisite. The launcher creates a randomly authenticated, loopback-only stack, runs the real agent through OTLP, freezes two recorded dependencies, replays one model-input change, and prints the verified comparison.
+
+```sh
+docker run --rm \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  ghcr.io/krishnangopal1810/ai-flight-recorder-demo:v0.1.0-alpha.1 start
+```
+
+The first pull can take a few minutes. The investigation itself is deterministic and ends with a payoff you can inspect:
+
+```text
+✓ Captured failed run        eligible refund denied
+✓ Froze 2 dependencies       retriever, eligibility tool
+✓ Replayed 1 change          model system instruction
+✓ Found first divergence     refund-decision → model request
+✓ Candidate completed        decision: approve
+
+Inspector:    http://127.0.0.1:7777/runs/...
+Access token: frt_...
+```
+
+The launcher supports named parallel demos, a custom loopback port, and machine-readable output:
+
+```sh
+# Reprint the last result
+docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+  ghcr.io/krishnangopal1810/ai-flight-recorder-demo:v0.1.0-alpha.1 status
+
+# Safe cleanup only touches resources with this demo's ownership labels
+docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+  ghcr.io/krishnangopal1810/ai-flight-recorder-demo:v0.1.0-alpha.1 stop --purge
+```
+
+Use `--name NAME`, `--http-port PORT`, or `--json` with `start`, `status`, and `stop`. Plain `stop` retains the evidence volumes; `stop --purge` explicitly removes them.
+
+`--json` returns stable keys for automation: `inspector_url`, `token`, `source_capsule_id`, `candidate_capsule_id`, `job_id`, `first_divergence`, `recorded_outcome`, and `candidate_outcome`.
+
+## Three things traces cannot give you
+
+**A frozen world.** Run Capsules join the trace with recorded prompts, provenance, artifacts, and boundary responses. Missing evidence becomes a visible blocker, never permission to call the live dependency.
+
+**One controlled change.** Edit a model request or a recorded model, retriever, tool, API, or MCP response. Every other recorded boundary stays substituted unless policy explicitly declares a safe live read.
+
+**The earliest split.** Recorded and candidate executions align by logical operation, not timestamp. Flight Recorder surfaces the first meaningful difference before the cascade it caused.
+
+## Capture → replay → compare
+
+```mermaid
+flowchart LR
+    A["Capture the failed run"] --> B["Freeze recorded boundaries"]
+    B --> C["Change one value"]
+    C --> D["Replay in OCI isolation"]
+    D --> E["Align both execution trees"]
+    E --> F["Find the first divergence"]
+```
+
+The result is evidence, not magic. Flight Recorder keeps immutable **evidence**, computed **observations**, and proposed **hypotheses** as distinct types. It never turns correlation into a causal claim.
+
+## Why not just trace or re-run?
+
+Re-running normally asks today's models, tools, indexes, flags, and APIs to recreate yesterday's world. A trace shows what happened, but it cannot hold those dependencies still while you test a change.
+
+| Question | Trace viewer | Normal re-run | AI Flight Recorder |
+|---|---:|---:|---:|
+| What happened? | Yes | Sometimes | Yes |
+| Can I reproduce the recorded dependency world? | No | No | **Yes** |
+| Can I change exactly one recorded value? | No | No | **Yes** |
+| Are unknown or mutating boundaries closed by default? | N/A | No | **Yes** |
+| Where did the candidate first split? | Manual comparison | Usually unknown | **Aligned automatically** |
+| Can the result become regression evidence? | Export-dependent | Ad hoc | **Built in** |
+
+Flight Recorder sits beside your OpenTelemetry stack. It consumes the evidence your instrumentation already emits, then adds the executable debugging layer that begins after capture.
+
+## Record an agent
+
+Standard OTLP/OpenInference spans are the front door. They already let Flight Recorder capture, inspect, and compare what happened. Controlled replay adds one more layer: a recipe for restarting the agent and boundaries that let Flight Recorder hold the outside world still.
+
+| Integration level | What you get |
+|---|---|
+| OpenTelemetry capture | A policy-safe record of the run for inspection and comparison |
+| Entrypoint + boundaries | An isolated re-execution where recorded dependencies can be substituted, changed, or deliberately run live |
+
+The replay hooks belong at the edges of the application—your model client, repository, tool adapter, or MCP client—not throughout the agent's business logic.
+
+### 1 · Capture the run you already have
+
+```sh
+export OTEL_RESOURCE_ATTRIBUTES='service.name=my-agent,flight.project.id=my-project,flight.capture=true'
+export FLIGHT_TOKEN='frt_...'
+flight --url http://127.0.0.1:7777 --token "$FLIGHT_TOKEN" record -- python app.py
+```
+
+That is enough to bring compatible telemetry through the front door. To make the run executable later, give Flight Recorder a restart button.
+
+### 2 · Give Flight Recorder a restart button
+
+A replay does not resume an old process. It starts a fresh copy of the agent from an immutable OCI image, sends the recorded root input to `stdin`, and runs the registered command from the beginning.
+
+Build the same code and dependencies that handled the request, then capture the immutable local image ID:
+
+```sh
+docker build -t my-agent:recording .
+export FLIGHT_REPLAY_IMAGE="$(docker image inspect --format '{{.Id}}' my-agent:recording)"
+```
+
+Call the metadata helpers while the agent's root span is active:
+
+```python
+import os
+
+from flight_recorder import register_entrypoint, set_run_provenance
+
+set_run_provenance(
+    project_id="my-project",
+    repository_url="https://github.com/acme/my-agent",
+    commit_sha=os.environ.get("GIT_COMMIT"),
+)
+
+register_entrypoint(
+    ["python", "/app/agent.py"],
+    image=os.environ["FLIGHT_REPLAY_IMAGE"],
+    model_hosts=["api.openai.com"],
+)
+```
+
+- `command` is the argv Flight Recorder starts inside the image. The path must exist in that image.
+- `image` freezes the agent code, runtime, system libraries, and installed packages—not just the source revision.
+- `model_hosts` is a hostname allowlist for model calls intentionally run live. It contains no URLs, paths, or credentials.
+
+`register_entrypoint()` records this recipe; it does not build, upload, or validate the image. A raw `sha256:…` image ID works when recording and replay share the same Docker or Podman image store. A remote replay worker needs a pullable, immutable registry reference such as `ghcr.io/acme/my-agent@sha256:…`. The capsule stores that reference, never the image layers or credential values.
+
+### 3 · Freeze the outside world
+
+A boundary turns one real dependency call into a recording-generated stub. On the original run it calls the dependency and captures the result. On replay it can return that recorded result without invoking the callback, run the call live through policy, or pass an edited request to a request-aware callback.
+
+#### Model call
+
+```python
+from flight_recorder import boundary
+
+model_request = {
+    "model": "gpt-5",
+    "messages": [{"role": "user", "content": "Is this refund eligible?"}],
+}
+
+answer = boundary(
+    "model.refund-decision",
+    model_request,
+    lambda effective_request: model_client.generate(effective_request),
+    boundary_class="llm",
+    side_effect="read_only",
+    replay_policy="live",
+)
+```
+
+The callback accepts `effective_request` so a controlled model-input edit reaches the actual client. If the replay plan substitutes this boundary, `model_client.generate()` is never called.
+
+#### Repository-level database read
+
+```python
+from flight_recorder import boundary
+
+def load_open_orders(customer_id: str):
+    request = {"customer_id": customer_id, "status": "open"}
+
+    return boundary(
+        "orders.load-open",
+        request,
+        lambda effective_request: order_store.load_open(
+            effective_request["customer_id"]
+        ),
+        boundary_class="database",
+        side_effect="read_only",
+        replay_policy="substitute",
+    )
+```
+
+Record the stable repository contract rather than a cursor or connection object. During replay, the recorded JSON-shaped rows come back without requiring the production database.
+
+#### Tool adapter
+
+```python
+from flight_recorder import boundary
+
+class RecordedEligibilityTools:
+    def __init__(self, tools):
+        self._tools = tools
+
+    def check_refund(self, order_id: str):
+        request = {"order_id": order_id}
+        return boundary(
+            "tools.check-refund-eligibility",
+            request,
+            lambda effective_request: self._tools.check_refund(
+                effective_request["order_id"]
+            ),
+            boundary_class="tool",
+            side_effect="read_only",
+            replay_policy="substitute",
+        )
+```
+
+The agent calls `tools.check_refund(order_id)` as usual. Replay behavior stays centralized in the adapter instead of leaking through the decision logic.
+
+#### Choose the safe default
+
+| External operation | Recommended replay policy |
+|---|---|
+| Model call | Substitute for reproduction; opt in to live for a deliberate model experiment |
+| Retrieval, database read, read-only tool or API | Substitute the recorded result |
+| Database write, payment, email, queue publish | Substitute or block |
+| Unknown effect | Block until it is classified |
+| Live mutation under test | Require a declared test sandbox and explicit user permission |
+
+A live mutating boundary must name its sandbox:
+
+```python
+result = boundary(
+    "refunds.create",
+    {"order_id": order_id, "amount": amount},
+    lambda effective_request: refund_test_client.create(effective_request),
+    boundary_class="tool",
+    side_effect="mutating",
+    replay_policy="live",
+    sandbox="refund-api-test",
+)
+```
+
+Declaring `sandbox` does not grant permission by itself. The replay configuration must map it to an isolated destination, and the user must explicitly allow sandboxed side effects.
+
+<details>
+<summary><strong>TypeScript equivalent</strong></summary>
+
+```ts
+import {boundary, registerEntrypoint, setRunProvenance} from "@ai-flight-recorder/sdk";
+
+setRunProvenance({
+  projectId: "my-project",
+  repositoryUrl: "https://github.com/acme/my-agent",
+  commitSha: process.env.GIT_COMMIT,
+});
+
+registerEntrypoint(["node", "/app/agent.js"], {
+  image: process.env.FLIGHT_REPLAY_IMAGE,
+  modelHosts: ["api.openai.com"],
+});
+
+const modelRequest = {
+  model: "gpt-5",
+  messages: [{role: "user", content: "Is this refund eligible?"}],
+};
+
+const answer = await boundary(
+  modelRequest,
+  (effectiveRequest) => modelClient.generate(effectiveRequest),
+  {
+    logicalKey: "model.refund-decision",
+    boundaryClass: "llm",
+    sideEffect: "read_only",
+    replayPolicy: "live",
+  },
+);
+```
+
+</details>
+
+### Life of a replay
+
+```mermaid
+flowchart LR
+    A["Original request"] --> B["Captured Run Capsule"]
+    B --> C["Recorded root input"]
+    B --> D["Boundary requests and responses"]
+    B --> E["Image and command"]
+    C --> F["Read-only replay container"]
+    D --> G["Replay plan"]
+    E --> F
+    G --> F
+    F --> H{"Boundary policy"}
+    H -->|"Substitute"| I["Return recorded response"]
+    H -->|"Approved live call"| J["Hostname-restricted gateway"]
+    I --> K["Candidate capsule"]
+    J --> K
+    K --> L["Aligned comparison and first divergence"]
+```
+
+The replay worker reads the original root input, starts the registered image as a non-root process with a read-only filesystem, and gives the SDK an immutable replay plan. Recorded reads return without contacting production. Explicitly approved live calls can reach only declared destinations through the gateway. Boundary mismatches fail closed; other destinations have no network path.
+
+That is the payoff: no production database is needed for substituted reads, stubbed callbacks are not invoked, and one recorded value can change while the rest of the dependency world stays frozen. The candidate telemetry becomes a new capsule, aligned against the original to reveal the first meaningful divergence.
+
+The alpha CLI archives are release artifacts. Python and TypeScript SDKs are source-installed for now; PyPI, npm, and Homebrew distribution will follow onboarding feedback. See the [SDK contract](docs/SDK.md) and [reference agents](examples/).
+
+## What never happens during replay?
+
+- Missing or ambiguous boundary evidence never silently falls through to production.
+- Unknown or mutating boundaries never run unless a sandbox and explicit permission both exist.
+- Replayed application containers never receive production credentials, the Docker socket, direct external networking, or host-writable mounts.
+- Playback never starts application code or contacts an external system.
+- Prompts, outputs, documents, and tool arguments never enter operational telemetry.
+
+Capture policy runs before durable storage, hashing, indexing, logs, metrics, or quarantine. Damaged evidence stays visibly damaged while unaffected verified evidence remains inspectable.
+
+Read the full [security invariants](docs/SECURITY.md), [replay-isolation design](docs/design-docs/replay-isolation.md), and [reliability contract](docs/RELIABILITY.md).
+
+## Turn the fix into a regression
+
+A successful candidate is not the end of the investigation. Export the source capsule, preserve the evaluator and comparison, and run the same evidence locally or in CI.
+
+```sh
+flight evaluator run regression.yaml \
+  --baseline "$SOURCE_CAPSULE" \
+  --candidate "$CANDIDATE_CAPSULE"
+```
+
+When a regression spans revisions, the experimental bisect workflow builds and replays isolated candidates, requires evaluator evidence, and refuses to invent a first-bad commit when history is flaky or non-monotonic.
+
+## Honest alpha boundaries
+
+Flight Recorder creates a controlled experiment; it does not promise universal or bit-for-bit determinism. It cannot expose hidden model reasoning, safely re-run arbitrary production side effects, or prove causality from correlation.
+
+This alpha is single-tenant and customer-hosted. Git bisect is experimental. Python and TypeScript package registries are not published yet. Design-partner evidence and representative performance measurements are still required before beta.
+
+That honesty is part of the product: a debugger should make uncertainty smaller, not hide it.
+
+## Help build the debugger you wanted that day
+
+Lost an afternoon to an agent failure that refused to happen twice?
+
+**[Star the project](https://github.com/krishnangopal1810/ai-flight-recorder)**, share the incident pattern in [Discussions](https://github.com/krishnangopal1810/ai-flight-recorder/discussions), or help build the debugger you wanted that day.
+
+- Start with the [contribution guide](CONTRIBUTING.md) and [good first investigations](ROADMAP.md#good-first-investigations).
+- Report a reproducibility gap, integration request, or concrete incident through the [focused issue forms](https://github.com/krishnangopal1810/ai-flight-recorder/issues/new/choose).
+- Follow the [public roadmap](ROADMAP.md), [code of conduct](CODE_OF_CONDUCT.md), and [security policy](SECURITY.md).
+
+<details>
+<summary><strong>Develop from source</strong></summary>
+
+The complete development stack requires Go 1.25+, Node.js 22, [uv](https://docs.astral.sh/uv/), Git, and Docker.
 
 ```sh
 git clone https://github.com/krishnangopal1810/ai-flight-recorder.git
@@ -53,141 +418,7 @@ make bootstrap
 make dev-up
 ```
 
-The stack starts Flight Recorder, PostgreSQL, MinIO, and deterministic external dependencies. It then runs the instrumented refund-review agent in [`examples/investigation-agent`](examples/investigation-agent), captures an incorrect denial, and creates a successful isolated candidate replay through the normal product APIs.
-
-Find the worktree-specific inspector URL:
-
-```sh
-./scripts/dev-stack.sh ps
-```
-
-Use the mapped HTTP URL and this intentionally fixed, loopback-only development token:
-
-```text
-frt_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-```
-
-Then follow the product loop:
-
-**Add a run → Inspect trace → Change one value → Replay pipeline → Compare runs**
-
-When you are done:
-
-```sh
-make observe QUERY=metrics
-make observe QUERY=capsules
-# Then inspect one run:
-./scripts/observe.sh traces <capsule-id>
-make dev-down
-```
-
-<details>
-<summary><strong>Prefer the embedded CLI workflow?</strong></summary>
-
-Start the local service:
-
-```sh
-go run ./cmd/flight serve
-```
-
-In another terminal, initialize and record a replay-aware application:
-
-```sh
-go run ./cmd/flight init
-go run ./cmd/flight record -- python app.py
-go run ./cmd/flight capsule list --json
-```
-
-The CLI also supports passive playback, capsule import/export, completeness checks, controlled replay, semantic diff, evaluators, and experimental Git bisect. See the [generated CLI reference](docs/generated/cli.md).
-
-</details>
-
-## How it works
-
-```mermaid
-flowchart LR
-    A["Failed agent run"] --> B["Policy-safe Run Capsule"]
-    B --> C["Change one controlled value"]
-    C --> D["OCI-isolated replay"]
-    D --> E["Align logical execution trees"]
-    E --> F["First meaningful divergence"]
-    F --> G["Regression evidence"]
-```
-
-### Run Capsules capture the replayable context
-
-A capsule joins the execution trace with the information that ordinary spans do not reliably preserve:
-
-- source revision, dirty-worktree identity, build, runtime, dependency locks, and feature flags;
-- prompts, model configuration, retrieval evidence, tool and MCP calls, artifacts, and evaluator evidence;
-- canonical boundary identities and recorded responses;
-- the replay entrypoint and explicit side-effect policy;
-- a deterministic, content-addressed manifest that can be exported as a portable `.tar.zst` bundle.
-
-Capsules declare whether they are complete enough for playback, replay, diff, and bisect. Missing evidence becomes a visible blocked state—not an excuse to call a live dependency.
-
-### Controlled replay freezes external boundaries
-
-Replay starts the registered application entrypoint from the beginning. Recorded tool, API, retrieval, MCP, and model results are substituted according to policy. Live reads require an explicit declaration; unknown and mutating boundaries are blocked by default.
-
-### Semantic diff finds where behavior changed
-
-Candidate and recorded runs are aligned as logical execution trees. Flight Recorder separates:
-
-- **Evidence** — immutable facts captured from a run;
-- **Observations** — computed differences between runs;
-- **Hypotheses** — explanations supported by controlled evidence.
-
-It does not turn correlation into a causal claim. It gives you a reproducible experiment and shows you where to look first.
-
-## More than another trace viewer
-
-Flight Recorder is designed to sit beside your observability stack, not replace it. It consumes OpenTelemetry and OpenInference, then adds the executable debugging layer that begins after a trace is captured.
-
-| Your telemetry provides | Flight Recorder adds |
-|---|---|
-| Spans, events, inputs, and outputs | Replay provenance, artifacts, boundary policy, and portable Run Capsules |
-| A historical view of the failure | Passive playback plus controlled full-run re-execution |
-| Timeline or span comparison | Logical-tree alignment and the first meaningful divergence |
-| Incident evidence | Versioned evaluators, CI regression handoff, and experimental revision search |
-
-## Safe by construction
-
-Replaying production failures is powerful enough to be dangerous. The safety model is part of the product, not a deployment footnote.
-
-- **Policy before persistence.** Capture policy runs before durable storage, hashing, indexing, logs, metrics, or quarantine.
-- **Playback executes nothing.** Recorded evidence remains inspectable even when replay workers or providers are unavailable.
-- **No silent live fallback.** Missing or ambiguous replay evidence blocks execution instead of contacting the real dependency.
-- **Side effects are closed by default.** Unknown and mutating boundaries are substituted or blocked unless a sandbox and explicit flag are present.
-- **Replays are isolated.** Application containers run without direct external networking, production credentials, the Docker socket, or host-writable mounts.
-- **Operational telemetry is payload-free.** Capsule prompts, outputs, documents, and tool arguments never become product telemetry.
-- **Damaged evidence fails visibly.** Missing or corrupt payloads remain labelled at their original references while unaffected verified evidence stays available.
-
-Read the full [security invariants](docs/SECURITY.md), [replay-isolation design](docs/design-docs/replay-isolation.md), and [reliability contract](docs/RELIABILITY.md).
-
-## Built for real agent stacks
-
-| Layer | V1 support |
-|---|---|
-| Ingestion | OTLP over HTTP and gRPC, OpenTelemetry, and OpenInference |
-| SDKs | Native Python and TypeScript metadata and controlled-boundary libraries |
-| Interfaces | Go CLI/service, REST, SSE, and a React investigation workspace |
-| Storage | SQLite/filesystem locally; PostgreSQL and S3-compatible object storage for hosted deployments |
-| Replay | Docker or configured Podman OCI runtime with a trusted replay gateway |
-| Portability | Deterministic tar+zstd bundles, canonical JSON, and SHA-256 content identities |
-| Deployment | Local CLI or single-tenant, customer-hosted service; no mandatory vendor cloud |
-
-The inspector uses the generated API client. HTTP handlers, CLI commands, and UI code never access storage directly. See [Architecture](ARCHITECTURE.md) for the domain dependency model and runtime data flow.
-
-## What V1 deliberately does not claim
-
-Flight Recorder creates a controlled experiment; it does not promise universal or bit-for-bit determinism. It does not expose hidden model reasoning, transparently re-run mutating production tools, or prove causality from correlation. Git bisect is experimental, and design-partner validation is still part of the V1 plan.
-
-That honesty matters: a debugging tool should make uncertainty smaller, not hide it.
-
-## Develop and verify
-
-The repository is built for agent-first, evidence-backed development. The most useful commands are:
+Useful gates:
 
 ```sh
 make build          # Go binaries, SDKs, and inspector
@@ -198,28 +429,23 @@ make security       # Privacy and replay-isolation checks
 make verify         # Every blocking local gate
 ```
 
-`make harness-check` proves the complete workflow inside a fresh isolated worktree and retains logs, capsules, replay plans, diffs, screenshots, traces, and video for diagnosis. The [acceptance matrix](docs/ACCEPTANCE.md) maps product requirements to executable evidence.
+`make harness-check` proves the full workflow in a fresh worktree and retains logs, capsules, replay plans, diffs, screenshots, traces, and video.
 
-## Documentation
+</details>
 
-- [Product requirements](ai-flight-recorder-prd.md) — the user problem, V1 promise, scope, and acceptance scenarios
-- [Architecture](ARCHITECTURE.md) — domains, dependencies, runtime flow, and compatibility model
-- [Security](docs/SECURITY.md) and [Reliability](docs/RELIABILITY.md) — non-negotiable runtime behavior
-- [SDK contract](docs/SDK.md) — Python/TypeScript metadata, boundary matching, and replay semantics
-- [Generated references](docs/generated/index.md) — API, schema, CLI, and database contracts
-- [Operations](docs/OPERATIONS.md) — development stack, observability, backup, and recovery
-- [V1 evidence audit](docs/V1_EVIDENCE.md) — implemented proof and remaining validation gaps
-- [Repository knowledge base](docs/README.md) — the full documentation map
+<details>
+<summary><strong>Architecture, contracts, and evidence</strong></summary>
 
-## Help build the debugger AI agents need
+- [Product requirements](ai-flight-recorder-prd.md)
+- [Architecture](ARCHITECTURE.md)
+- [API and schema references](docs/generated/index.md)
+- [Acceptance matrix](docs/ACCEPTANCE.md)
+- [V1 evidence audit](docs/V1_EVIDENCE.md)
+- [Operations](docs/OPERATIONS.md)
+- [Release process](docs/RELEASING.md)
+- [Repository knowledge base](docs/README.md)
 
-AI Flight Recorder is early, ambitious, and MIT licensed. The most valuable contributions start with a concrete failure story: what the agent did, which part of the world had moved by investigation time, and what evidence would have made the incident reproducible.
-
-- Read the [agent map](AGENTS.md) before changing the repository.
-- Open an [issue](https://github.com/krishnangopal1810/ai-flight-recorder/issues) with a failure mode, integration request, or focused proposal.
-- Keep changes vertical: behavior, tests, docs, generated contracts, and observability should move together.
-
-If you have ever lost an afternoon trying to reproduce an agent run that would not fail the same way twice, **star the repository**. It helps other AI engineers find the project—and tells us this problem is worth solving in the open.
+</details>
 
 ## License
 

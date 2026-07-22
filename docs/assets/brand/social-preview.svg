@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" role="img" aria-labelledby="title description">
+  <title id="title">AI Flight Recorder social preview</title>
+  <desc id="description">One recorded agent execution splits into a failed path and a successful controlled replay</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#09150f"/>
+      <stop offset="1" stop-color="#10281c"/>
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="8"/></filter>
+  </defs>
+  <rect width="1280" height="640" fill="url(#bg)"/>
+  <circle cx="1110" cy="70" r="210" fill="#16784a" opacity=".13"/>
+  <rect x="72" y="64" width="72" height="72" rx="20" fill="#24a367"/>
+  <path d="M92 90h32M92 100h25M92 111h17" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round"/>
+  <circle cx="128" cy="100" r="4" fill="#ffc857"/>
+  <text x="164" y="111" fill="#effaf3" font-family="ui-sans-serif,system-ui,-apple-system,sans-serif" font-size="37" font-weight="760">AI Flight Recorder</text>
+  <text x="72" y="228" fill="#fff" font-family="ui-sans-serif,system-ui,-apple-system,sans-serif" font-size="57" font-weight="800">Find where the run split.</text>
+  <text x="72" y="279" fill="#a8c4b4" font-family="ui-sans-serif,system-ui,-apple-system,sans-serif" font-size="25">Freeze recorded dependencies. Change one value. Replay safely.</text>
+  <path d="M84 408H430C512 408 526 364 594 364H678" fill="none" stroke="#7f9689" stroke-width="5" stroke-linecap="round"/>
+  <circle cx="679" cy="364" r="20" fill="#f4b942" opacity=".25" filter="url(#glow)"/>
+  <circle cx="679" cy="364" r="8" fill="#ffc857"/>
+  <path d="M688 364H800C850 364 874 330 924 330H1150" fill="none" stroke="#24a367" stroke-width="7" stroke-linecap="round"/>
+  <path d="M688 364H800C850 364 874 454 924 454H1150" fill="none" stroke="#e25b5b" stroke-width="7" stroke-linecap="round"/>
+  <circle cx="1150" cy="330" r="10" fill="#24a367"/>
+  <circle cx="1150" cy="454" r="10" fill="#e25b5b"/>
+  <text x="830" y="306" fill="#7de2a9" font-family="ui-monospace,SFMono-Regular,monospace" font-size="19" font-weight="700">CONTROLLED REPLAY · APPROVE</text>
+  <text x="850" y="494" fill="#ff9999" font-family="ui-monospace,SFMono-Regular,monospace" font-size="19" font-weight="700">RECORDED RUN · DENY</text>
+  <text x="622" y="414" fill="#ffc857" font-family="ui-monospace,SFMono-Regular,monospace" font-size="16" font-weight="700">FIRST DIVERGENCE</text>
+  <text x="72" y="574" fill="#779487" font-family="ui-monospace,SFMono-Regular,monospace" font-size="18">OPEN SOURCE · OPENTELEMETRY · ISOLATED REPLAY</text>
+</svg>
