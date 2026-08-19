@@ -16,7 +16,7 @@ telemetry = [
     "opentelemetry-sdk>=1.44,<2",
 ]
 openai = [
-    "openai>=2.46,<3",
+    "openai>=2.46,<4",
     "opentelemetry-exporter-otlp-proto-http>=1.44,<2",
     "opentelemetry-sdk>=1.44,<2",
 ]
@@ -29,7 +29,7 @@ langchain = [
 integrations = [
     "langchain>=1.3,<2",
     "langchain-core>=1.5,<2",
-    "openai>=2.46,<3",
+    "openai>=2.46,<4",
     "opentelemetry-exporter-otlp-proto-http>=1.44,<2",
     "opentelemetry-sdk>=1.44,<2",
 ]
