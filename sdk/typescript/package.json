@@ -36,7 +36,7 @@
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.0",
-    "canonicalize": "^3.0.0"
+    "canonicalize": "^4.0.0"
   },
   "peerDependencies": {
     "@langchain/core": ">=1 <2",
@@ -61,18 +61,18 @@
     "openai": {"optional": true}
   },
   "devDependencies": {
-    "@emnapi/core": "1.11.2",
-    "@emnapi/runtime": "1.11.2",
-    "@langchain/core": "1.2.3",
-    "@opentelemetry/api-logs": "0.220.0",
-    "@opentelemetry/exporter-logs-otlp-http": "0.220.0",
-    "@opentelemetry/exporter-trace-otlp-http": "0.220.0",
-    "@opentelemetry/resources": "2.9.0",
-    "@opentelemetry/sdk-logs": "0.220.0",
-    "@opentelemetry/sdk-trace-base": "2.9.0",
-    "@opentelemetry/sdk-trace-node": "2.9.0",
-    "@types/node": "^22.10.2",
-    "openai": "6.48.0",
+    "@emnapi/core": "1.11.3",
+    "@emnapi/runtime": "1.11.3",
+    "@langchain/core": "1.2.8",
+    "@opentelemetry/api-logs": "0.221.0",
+    "@opentelemetry/exporter-logs-otlp-http": "0.221.0",
+    "@opentelemetry/exporter-trace-otlp-http": "0.221.0",
+    "@opentelemetry/resources": "2.10.0",
+    "@opentelemetry/sdk-logs": "0.221.0",
+    "@opentelemetry/sdk-trace-base": "2.10.0",
+    "@opentelemetry/sdk-trace-node": "2.10.0",
+    "@types/node": "^26.2.0",
+    "openai": "7.4.0",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"
   }
