@@ -26,11 +26,11 @@ jobs:
           --health-timeout 2s
           --health-retries 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -38,7 +38,7 @@ jobs:
             web/package-lock.json
             sdk/typescript/package-lock.json
             examples/reference-typescript/package-lock.json
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v7
       - run: make bootstrap
       - run: cd web && npx playwright install --with-deps chromium
       - name: Build trusted replay gateway image
@@ -65,7 +65,7 @@ jobs:
           FLIGHT_REQUIRE_OCI_SECURITY: "1"
       - name: Upload agent-readable verification evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: verification-evidence-${{ github.run_id }}-${{ github.run_attempt }}
           path: |

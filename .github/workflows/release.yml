@@ -26,17 +26,17 @@ jobs:
           --health-timeout 2s
           --health-retries 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Require the tag to point at main
         run: |
           git fetch origin '+refs/heads/*:refs/remotes/origin/*' --tags --force
           test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -44,7 +44,7 @@ jobs:
             web/package-lock.json
             sdk/typescript/package-lock.json
             examples/reference-typescript/package-lock.json
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v7
       - run: make bootstrap
       - run: cd web && npx playwright install --with-deps chromium
       - name: Scan the complete Git history for secrets
@@ -84,7 +84,7 @@ jobs:
           FLIGHT_REQUIRE_OCI_SECURITY: "1"
       - name: Upload release-audit evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-audit-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -101,22 +101,22 @@ jobs:
       packages: write
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v7
       - name: Enforce beta and stable product gates
         if: ${{ !contains(github.ref_name, '-alpha') }}
         run: python3 scripts/check-beta-gates.py
       - uses: sigstore/cosign-installer@v3
       - uses: anchore/sbom-action/download-syft@v0
-      - uses: goreleaser/goreleaser-action@v6
+      - uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
           version: v2.17.0
@@ -185,14 +185,14 @@ jobs:
             dist/ai-flight-recorder-sdk-*
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: docker/metadata-action@v5
+      - uses: docker/metadata-action@v6
         id: service_metadata
         with:
           images: ghcr.io/${{ github.repository }}
@@ -201,7 +201,7 @@ jobs:
             type=raw,value=${{ github.ref_name }}
             type=semver,pattern={{version}}
       - name: Publish service image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         id: service_image
         with:
           context: .
@@ -213,7 +213,7 @@ jobs:
           provenance: mode=max
           sbom: true
 
-      - uses: docker/metadata-action@v5
+      - uses: docker/metadata-action@v6
         id: agent_metadata
         with:
           images: ghcr.io/${{ github.repository }}-demo-agent
@@ -222,7 +222,7 @@ jobs:
             type=raw,value=${{ github.ref_name }}
             type=semver,pattern={{version}}
       - name: Publish real refund-agent image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         id: agent_image
         with:
           context: .
@@ -234,7 +234,7 @@ jobs:
           provenance: mode=max
           sbom: true
 
-      - uses: docker/metadata-action@v5
+      - uses: docker/metadata-action@v6
         id: demo_metadata
         with:
           images: ghcr.io/${{ github.repository }}-demo
@@ -243,7 +243,7 @@ jobs:
             type=raw,value=${{ github.ref_name }}
             type=semver,pattern={{version}}
       - name: Publish Docker-only demo launcher
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         id: demo_image
         with:
           context: .
